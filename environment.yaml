@@ -1,0 +1,54 @@
+name: probe-tester
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - _libgcc_mutex=0.1=conda_forge
+  - _openmp_mutex=4.5=2_gnu
+  - biopython=1.85=py313h536fd9c_1
+  - bzip2=1.0.8=h4bc722e_7
+  - ca-certificates=2025.6.15=hbd8a1cb_0
+  - exonerate=2.4.0=h09da616_8
+  - glib=2.84.2=h6287aef_0
+  - glib-tools=2.84.2=h4833e2c_0
+  - ld_impl_linux-64=2.43=h1423503_5
+  - libblas=3.9.0=32_h59b9bed_openblas
+  - libcblas=3.9.0=32_he106b2a_openblas
+  - libexpat=2.7.0=h5888daf_0
+  - libffi=3.4.6=h2dba641_1
+  - libgcc=15.1.0=h767d61c_3
+  - libgcc-ng=15.1.0=h69a702a_3
+  - libgfortran=15.1.0=h69a702a_3
+  - libgfortran5=15.1.0=hcea5267_3
+  - libglib=2.84.2=h3618099_0
+  - libgomp=15.1.0=h767d61c_3
+  - libiconv=1.18=h4ce23a2_1
+  - liblapack=3.9.0=32_h7ac8fdf_openblas
+  - liblzma=5.8.1=hb9d3cd8_2
+  - libmpdec=4.0.0=hb9d3cd8_0
+  - libopenblas=0.3.30=pthreads_h94d23a6_0
+  - libsqlite=3.50.2=h6cd9bfd_0
+  - libstdcxx=15.1.0=h8f9b012_3
+  - libstdcxx-ng=15.1.0=h4852527_3
+  - libuuid=2.38.1=h0b41bf4_0
+  - libzlib=1.3.1=hb9d3cd8_2
+  - ncbi-datasets-cli=18.3.1=ha770c72_0
+  - ncurses=6.5=h2d0b736_3
+  - numpy=2.3.1=py313h17eae1a_0
+  - openssl=3.5.1=h7b32b05_0
+  - packaging=25.0=pyh29332c3_1
+  - pandas=2.3.0=py313ha87cce1_0
+  - pcre=8.45=h9c3ff4c_0
+  - pcre2=10.45=hc749103_0
+  - pip=25.1.1=pyh145f28c_0
+  - python=3.13.5=hec9711d_102_cp313
+  - python-dateutil=2.9.0.post0=pyhe01879c_2
+  - python-tzdata=2025.2=pyhd8ed1ab_0
+  - python_abi=3.13=7_cp313
+  - pytz=2025.2=pyhd8ed1ab_0
+  - readline=8.2=h8c095d6_2
+  - six=1.17.0=pyhd8ed1ab_0
+  - tk=8.6.13=noxft_hd72426e_102
+  - tzdata=2025b=h78e105d_0
+
+prefix: "/home/erick/miniforge3/envs/probe-tester"
