@@ -103,6 +103,8 @@ def download_command(args):
             if rich_available:
                 from rich.progress import Progress, BarColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
                 from rich.console import Console
+                total_fastas = sum(min(len(acc), args.max_genomes) if args.max_genomes else len(acc)
+                                  for _, acc in species_list)
                 console = Console()
                 with Progress(
                     TextColumn("[progress.description]{task.description}"),
@@ -114,23 +116,26 @@ def download_command(args):
                     console=console,
                     transient=False,
                 ) as progress:
-                    task = progress.add_task("[cyan]Downloading species", total=len(species_list))
+                    overall_task = progress.add_task("[magenta]Total FASTAs", total=total_fastas)
                     for species, accessions in species_list:
-                        desc = f"[cyan]{species}"
-                        progress.update(task, description=desc)
                         if args.max_genomes:
                             accessions = accessions[:args.max_genomes]
-                        count = download_genomes(species, accessions, work_dir=args.outdir)
-                        logging.info("Downloaded %d genomes for %s", count, species)
-                        progress.update(task, advance=1)
+                        download_genomes(
+                            species,
+                            accessions,
+                            work_dir=args.outdir,
+                            progress=progress,
+                            overall_task=overall_task
+                        )
+                        logging.debug("Downloaded %d genomes for %s", len(accessions), species)
             else:
                 print(f"[INFO] Downloading {len(species_list)} species:")
                 for i, (species, accessions) in enumerate(species_list, 1):
-                    print(f"  [{i}/{len(species_list)}] {species} ({len(accessions)} genomes)")
                     if args.max_genomes:
                         accessions = accessions[:args.max_genomes]
-                    count = download_genomes(species, accessions, work_dir=args.outdir)
-                    logging.info("Downloaded %d genomes for %s", count, species)
+                    print(f"  [{i}/{len(species_list)}] {species} ({len(accessions)} genomes)")
+                    download_genomes(species, accessions, work_dir=args.outdir)
+                    logging.info("Downloaded %d genomes for %s", len(accessions), species)
         print(f"\n[SUCCESS] Run complete!\nNext: \n python main.py assay --forward <FWD> --reverse <REV> --probe <PROBE>")
     else:  # mode == "species"
         accessions = get_accessions_for_species(taxid, output_dir=args.outdir)
@@ -143,9 +148,10 @@ def download_command(args):
         if not args.dry_run:
             if args.max_genomes:
                 accessions = accessions[:args.max_genomes]
-            count = download_genomes(sci_name.replace(" ", "-"), accessions, work_dir=args.outdir)
-            logging.info("Downloaded %d genomes for %s", count, sci_name)
+            download_genomes(sci_name.replace(" ", "-"), accessions, work_dir=args.outdir)
+            logging.info("Downloaded %d genomes for %s", len(accessions), sci_name)
         print(f"\n[SUCCESS] Run complete!\nNext: \n python main.py assay --forward <FWD> --reverse <REV> --probe <PROBE>")
+
 
 def assay_command(args):
     import datetime
@@ -303,7 +309,10 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
             avg_fwd = total_fwd / total_amplicons if total_amplicons else "-"
             avg_rev = total_rev / total_amplicons if total_amplicons else "-"
             avg_probe = total_probe / total_amplicons if total_amplicons else "-"
-            avg_amplicons_per_genome = total_amplicons / n_genomes if n_genomes else "-"
+            avg_amplicons_per_genome = (
+                total_amplicons / n_genomes_with_hits
+                if n_genomes_with_hits else "-"
+            )
             fraction_with_hits = (n_genomes_with_hits / n_genomes * 100) if n_genomes else 0
 
             rows.append([
@@ -328,7 +337,10 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
         grand_avg_fwd = grand_fwd / grand_amplicons if grand_amplicons else "-"
         grand_avg_rev = grand_rev / grand_amplicons if grand_amplicons else "-"
         grand_avg_probe = grand_probe / grand_amplicons if grand_amplicons else "-"
-        grand_avg_amp_per_genome = grand_amplicons / grand_genomes if grand_genomes else "-"
+        grand_avg_amp_per_genome = (
+            grand_amplicons / grand_genomes_with_hits
+            if grand_genomes_with_hits else "-"
+        )
         grand_frac_with_hits = (grand_genomes_with_hits / grand_genomes * 100) if grand_genomes else 0
 
         total_row = [
