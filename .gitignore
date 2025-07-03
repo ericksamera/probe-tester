@@ -209,3 +209,5 @@ __marimo__/
 genomes/
 *.csv
 *.zip
+*.txt
+*.json
