@@ -27,7 +27,7 @@ It supports automated download of NCBI genomes, in silico PCR (`IPCRESS`) matchi
 
 **Easiest, install with conda**
 ```shell
-mamba create env -f environment.yaml
+mamba env create -f environment.yaml
 ```
 
 ---
@@ -62,8 +62,8 @@ python main.py assay \
   --forward TCTAATTTTTTCATCATCGCTAATGC \
   --reverse TCAGGCCTTTGCTACAATGAAC \
   --probe AACTGCATCATATCACATACT \
-  --run-name Parker-2017
-  --threads 4 \
+  --run-name Parker-2017 \
+  --threads 4
 ```
 
 * Uses multiprocessing (`--threads`) if desired for speed.
