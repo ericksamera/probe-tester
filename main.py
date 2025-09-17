@@ -173,7 +173,7 @@ def assay_command(args):
     results = analyze_genome_products(
         forward_primer=args.forward,
         reverse_primer=args.reverse,
-        probe=args.probe,
+        probe=args.probe,  # Optional
         genomes_dir=args.genomes_dir,
         primer_min=args.primer_min,
         primer_max=args.primer_max,
@@ -187,7 +187,7 @@ def assay_command(args):
         "date": datetime.datetime.now().isoformat(),
         "forward_primer": args.forward,
         "reverse_primer": args.reverse,
-        "probe": args.probe,
+        "probe": args.probe,  # May be None
         "primer_min": args.primer_min,
         "primer_max": args.primer_max,
         "mismatch": args.mismatch,
@@ -246,7 +246,6 @@ def parse_args() -> argparse.Namespace:
     listcmd.add_argument("--mode", choices=["parent", "species"], default="parent",
                         help="List all genomes under a parent taxon or just a single species")
 
-
     # --- DOWNLOAD SUBCOMMAND ---
     dl = subparsers.add_parser("download", help="Download genomes")
     dl.add_argument("--taxon", required=True, help="NCBI taxon name or taxid (parent or species)")
@@ -261,7 +260,7 @@ def parse_args() -> argparse.Namespace:
     test = subparsers.add_parser("assay", help="Test probes on downloaded genomes")
     test.add_argument("--forward", required=True, help="Forward primer sequence")
     test.add_argument("--reverse", required=True, help="Reverse primer sequence")
-    test.add_argument("--probe", required=True, help="Probe sequence")
+    test.add_argument("--probe", required=False, help="Probe sequence (optional)")
     test.add_argument("--genomes-dir", type=Path, default=Path("./genomes"), help="Genomes directory (output of download)")
     test.add_argument("--primer-min", type=int, default=60, help="Min product length for IPCRESS")
     test.add_argument("--primer-max", type=int, default=200, help="Max product length for IPCRESS")
@@ -293,9 +292,11 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
     def build_rows_and_totals(run_data, selected_organisms):
         rows = []
         grand_fwd = grand_rev = grand_probe = grand_amplicons = grand_genomes = grand_genomes_with_hits = 0
+        grand_probe_n = 0
         for organism in selected_organisms:
             genomes = run_data[organism]
             total_fwd = total_rev = total_probe = total_amplicons = 0
+            total_probe_n = 0
             n_genomes = n_genomes_with_hits = 0
             for genome_results in genomes.values():
                 n_genomes += 1
@@ -305,10 +306,13 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
                     for entry in genome_results:
                         total_fwd += entry.get("forward_mismatches", 0)
                         total_rev += entry.get("reverse_mismatches", 0)
-                        total_probe += entry.get("probe_mismatches", 0)
+                        pm = entry.get("probe_mismatches", None)
+                        if pm is not None:
+                            total_probe += pm
+                            total_probe_n += 1
             avg_fwd = total_fwd / total_amplicons if total_amplicons else "-"
             avg_rev = total_rev / total_amplicons if total_amplicons else "-"
-            avg_probe = total_probe / total_amplicons if total_amplicons else "-"
+            avg_probe = (total_probe / total_probe_n) if total_probe_n else "-"
             avg_amplicons_per_genome = (
                 total_amplicons / n_genomes_with_hits
                 if n_genomes_with_hits else "-"
@@ -333,10 +337,11 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
             grand_amplicons += total_amplicons
             grand_genomes += n_genomes
             grand_genomes_with_hits += n_genomes_with_hits
+            grand_probe_n += total_probe_n
 
         grand_avg_fwd = grand_fwd / grand_amplicons if grand_amplicons else "-"
         grand_avg_rev = grand_rev / grand_amplicons if grand_amplicons else "-"
-        grand_avg_probe = grand_probe / grand_amplicons if grand_amplicons else "-"
+        grand_avg_probe = (grand_probe / grand_probe_n) if grand_probe_n else "-"
         grand_avg_amp_per_genome = (
             grand_amplicons / grand_genomes_with_hits
             if grand_genomes_with_hits else "-"
@@ -410,7 +415,6 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
                     for row in target_rows:
                         print(" | ".join(row))
         # Panel 2: nontargets
-        
         if nontarget_organisms:
             print(f"\n=== Run: {run_name} {'(Non-targets)' if target else ''} ===")
             nontarget_rows = build_rows_and_totals(run_data, nontarget_organisms)
@@ -462,5 +466,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n[INFO] Cancelled by user. Partial results may be saved.")
         sys.exit(1)
-
-# ---

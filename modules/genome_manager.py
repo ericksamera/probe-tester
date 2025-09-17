@@ -78,14 +78,12 @@ def validate_taxon(input_taxon: str, parent_mode: bool = False) -> Optional[tupl
     return current_name, current_taxid, rank, taxonomy
 
 
-
 def get_species_accessions_by_parent_taxid(
         parent_taxid: int,
         output_dir: Path = Path(".")
     ) -> Optional[Dict[str, List[str]]]:
     """
     Fetch and return mapping of all child species and their accessions under a parent taxon.
-    Also writes a CSV with mapping info.
     Returns {species_name: [accession1, accession2, ...]}
     """
     logger.info("Fetching all child species for parent taxid: %d", parent_taxid)
@@ -114,8 +112,7 @@ def get_genomes_mapping(
         output_dir: Path = Path(".")
     ) -> Optional[Dict[str, List[str]]]:
     """
-    Returns a mapping from species to a list of current_accession IDs for available genomes,
-    and writes a CSV file of all assemblies found.
+    Returns a mapping from species to a list of current_accession IDs for available genomes.
     """
     try:
         result = io_tools.run_command([
@@ -134,24 +131,15 @@ def get_genomes_mapping(
         return None
 
     entries = json.loads(result.stdout.strip())
-    sample_mapping = []
-    sample_species_dict = {}
+    sample_species_dict: Dict[str, List[str]] = {}
     for entry in entries['reports']:
         organism_name = "-".join(entry.get("organism", {}).get("organism_name", "").split()[:2])
         assembly_name: str = entry.get("assembly_info", {}).get("assembly_name")
 
-        if not assembly_name.startswith("ASM"):
+        if not assembly_name or not assembly_name.startswith("ASM"):
             continue
 
-        if organism_name not in sample_species_dict:
-            sample_species_dict[organism_name] = []
-
-        sample_species_dict[organism_name].append(entry.get("current_accession"))
-        sample_mapping.append({
-            "organism_name": organism_name,
-            "current_accession": entry.get("current_accession"),
-            "assembly_name": assembly_name
-        })
+        sample_species_dict.setdefault(organism_name, []).append(entry.get("current_accession"))
 
     return sample_species_dict
 
@@ -171,47 +159,62 @@ def download_genomes(
     """
     genomes_dir = work_dir / "genomes" / species
     genomes_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = work_dir / "ncbi_dataset.zip"
 
     total = len(accession_list)
     genomes_counter = 0
 
-    if total <= chunk_size:
-        accession_chunks = [accession_list]
-    else:
-        accession_chunks = list(chunked(accession_list, chunk_size))
+    accession_chunks = [accession_list] if total <= chunk_size else list(chunked(accession_list, chunk_size))
+
+    def _extract_accession(member_path_str: str) -> str:
+        p = Path(member_path_str)
+        candidates = [p.parent.name, p.stem, p.stem.split("_genomic")[0]]
+        for c in candidates:
+            if c.startswith(("GCA_", "GCF_")):
+                return c
+        # Fallback to the most specific stem
+        return candidates[-1]
 
     if progress and overall_task is not None:
         # Use a per-species bar below the overall total
         species_task = progress.add_task(f"[cyan]{species} FASTAs", total=total)
         for chunk_idx, acc_chunk in enumerate(accession_chunks):
             try:
-                result = io_tools.run_command(
+                io_tools.run_command(
                     ["datasets", "download", "genome", "accession"] + acc_chunk,
-                    capture_output=True
+                    capture_output=True,
+                    cwd=work_dir
                 )
             except Exception as e:
                 logger.error("Error running datasets CLI on chunk: %s", e)
                 continue
 
             try:
-                with zipfile.ZipFile("ncbi_dataset.zip") as z:
+                with zipfile.ZipFile(zip_path) as z:
                     fasta_names = [name for name in z.namelist() if name.endswith(".fna")]
                     for name in fasta_names:
                         with z.open(name) as handle:
+                            accession = _extract_accession(name)
                             fasta_io = TextIOWrapper(handle)
                             records = []
                             for i, record in enumerate(SeqIO.parse(fasta_io, "fasta")):
                                 old_id = record.id
-                                record.id = f"{species}.{genomes_counter}.{i}"
+                                record.id = f"{accession}.{i}"
                                 record.description = old_id
                                 records.append(record)
-                            SeqIO.write(records, genomes_dir / f"{species}.{genomes_counter}.fna", "fasta")
+                            SeqIO.write(records, genomes_dir / f"{accession}.fna", "fasta")
                         genomes_counter += 1
                         progress.update(overall_task, advance=1)
                         progress.update(species_task, advance=1)
             except Exception as e:
                 logger.error("Error processing FASTA files in chunk: %s", e)
-                continue
+            finally:
+                try:
+                    if zip_path.exists():
+                        zip_path.unlink()
+                except Exception:
+                    pass
+
         progress.update(species_task, completed=total)
         progress.remove_task(species_task)
     else:
@@ -219,20 +222,21 @@ def download_genomes(
         for chunk_idx, acc_chunk in enumerate(accession_chunks):
             print(f"  Downloading chunk {chunk_idx+1}/{len(accession_chunks)} ({len(acc_chunk)} genomes)")
             try:
-                result = io_tools.run_command(
+                io_tools.run_command(
                     ["datasets", "download", "genome", "accession"] + acc_chunk,
-                    capture_output=True
+                    capture_output=True,
+                    cwd=work_dir
                 )
             except Exception as e:
                 print(f"[ERROR] Error running datasets CLI on chunk: {e}")
                 continue
 
             try:
-                with zipfile.ZipFile("ncbi_dataset.zip") as z:
+                with zipfile.ZipFile(zip_path) as z:
                     fasta_names = [name for name in z.namelist() if name.endswith(".fna")]
                     for name in fasta_names:
                         with z.open(name) as handle:
-                            accession: str = Path(name).stem.split('_')[0]
+                            accession: str = _extract_accession(name)
                             fasta_io = TextIOWrapper(handle)
                             records = []
                             for i, record in enumerate(SeqIO.parse(fasta_io, "fasta")):
@@ -245,10 +249,11 @@ def download_genomes(
                         print(f"    [{genomes_counter}/{total}] {name}")
             except Exception as e:
                 print(f"[ERROR] Error processing FASTA files in chunk: {e}")
-                continue
+            finally:
+                try:
+                    if zip_path.exists():
+                        zip_path.unlink()
+                except Exception:
+                    pass
 
-    Path("ncbi_dataset.zip").unlink()
     return genomes_counter
-
-
-# ---

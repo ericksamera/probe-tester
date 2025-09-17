@@ -1,10 +1,8 @@
 """
 modules/probe_analysis.py
-
 """
 import logging
-
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Tuple, Optional
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -18,9 +16,11 @@ def process_genome_job(
 ) -> tuple[str, str, list]:
     """Worker function for multiprocessing."""
     (
-        forward_primer, reverse_primer, probe, primers_file_path, 
+        forward_primer, reverse_primer, probe, primers_file_path,
         species_name, genome_path, mismatch, dry_run
     ) = args
+
+    # Local imports inside worker to be safe with multiprocessing on some platforms
     from modules.sequence_utils import reverse_complement, count_mismatches
     from modules.probe_analysis import match_probe, run_ipcress
 
@@ -33,7 +33,10 @@ def process_genome_job(
             r_mismatches = count_mismatches(
                 reverse_complement(reverse_primer), product[-len(reverse_primer):]
             )
-            probe_mismatches, probe_pos = match_probe(probe, product)
+            if probe:
+                probe_mismatches, probe_pos = match_probe(probe, product)
+            else:
+                probe_mismatches, probe_pos = None, None
             product_results.append({
                 "product": product,
                 "forward_mismatches": f_mismatches,
@@ -106,11 +109,10 @@ def write_ipcress_primers_file(
 ) -> Path:
     """
     Writes a temporary IPCRESS-compatible primers file.
-    Returns the path to the file.
+    Format used: NAME FORWARD_PRIMER REVERSE_PRIMER MIN MAX
+    (Probe matching, if desired, is handled post hoc in Python.)
     """
     temp = NamedTemporaryFile("w+", delete=False, suffix=".primers")
-    # Adjust line below as needed for your specific IPCRESS file format
-    # Example format: NAME FORWARD_PRIMER REVERSE_PRIMER PROBE MIN MAX
     temp.write(f"PROBE {forward} {reverse} {primer_min} {primer_max}\n")
     temp.flush()
     return Path(temp.name)
@@ -118,7 +120,7 @@ def write_ipcress_primers_file(
 def analyze_genome_products(
     forward_primer: str,
     reverse_primer: str,
-    probe: str,
+    probe: Optional[str],
     genomes_dir: Path,
     primer_min: int = 1,
     primer_max: int = 1500,
@@ -129,6 +131,7 @@ def analyze_genome_products(
     """
     For each genome in genomes_dir, run ipcress and analyze matches.
     Uses multiprocessing if threads > 1.
+    Probe is optional; when absent, probe metrics are omitted (None).
     """
     from modules.probe_analysis import write_ipcress_primers_file
 
@@ -146,7 +149,7 @@ def analyze_genome_products(
         all_results[species_name] = {}
         for genome_path in genome_paths:
             jobs.append((
-                forward_primer, reverse_primer, probe, primers_file, 
+                forward_primer, reverse_primer, probe, primers_file,
                 species_name, genome_path, mismatch, dry_run
             ))
 
@@ -189,7 +192,7 @@ def analyze_genome_products(
                     all_results[species_name][genome_id] = product_results
                     print(f"[{i}/{len(jobs)}] {species_name}:{genome_id}")
     else:
-        # Serial fallback (keep your rich/simple logic as before if you want)
+        # Serial fallback
         for job in jobs:
             species_name, genome_id, product_results = process_genome_job(job)
             all_results[species_name][genome_id] = product_results
@@ -200,6 +203,3 @@ def analyze_genome_products(
         pass
 
     return all_results
-
-
-# ---
