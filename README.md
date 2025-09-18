@@ -22,8 +22,7 @@ It supports automated download of NCBI genomes, in silico PCR (`IPCRESS`) matchi
 
 * `python >= 3.8`
 * [`ncbi-datasets-cli`](https://www.ncbi.nlm.nih.gov/datasets/docs/v2/download-and-install/)
-* [`biopython >= 1.85`](https://biopython.org/)
-* Python packages: (optionally) `rich`, `tabulate`
+* Python packages: (optionally) `rich`,
 
 **Easiest, install with conda**
 ```shell
