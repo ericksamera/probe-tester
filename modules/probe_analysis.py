@@ -145,9 +145,16 @@ def run_ipcr(
     ipcr_exe: Optional[Path] = None,
 ) -> Optional[List[str]]:
     """
-    Run your Go 'ipcr' in FASTA mode and return product sequences.
-    We keep probe handling in Python to match the ipcress path.
+    Run Go 'ipcr' in FASTA mode and return product sequences.
+
+    Exit codes:
+      0 -> parse FASTA, return sequences
+      1 -> no amplicons found => return []
+      2 -> usage/config error => ValueError
+      3+ -> runtime/IO error   => RuntimeError
     """
+    import subprocess
+
     exe = str(ipcr_exe) if ipcr_exe else "ipcr"
     cmd = [
         exe,
@@ -157,21 +164,38 @@ def run_ipcr(
         "--min-length", str(int(min_len)),
         "--max-length", str(int(max_len)),
         "--mismatches", str(int(mismatches)),
-        "--threads", "1",
+        "--threads", str(int(threads if threads > 0 else 1)),
         "--output", "fasta",
         "--sort",
     ]
-    result = io_tools.run_command(cmd, capture_output=True, dry_run=dry_run)
-    if not result:
-        logger.warning("No ipcr result for %s", genome_path)
-        return None
 
-    # ipcr FASTA headers look like: >manual_1 start=... end=... len=...
-    text = result.stdout.decode(errors="replace")
-    seqs = _parse_fasta_from_text(text)
-    logger.debug("ipcr parsed %d products for %s", len(seqs), genome_path)
-    return seqs
+    try:
+        result = io_tools.run_command(cmd, capture_output=True, dry_run=dry_run)
+        rc = getattr(result, "returncode", 0)
+        stdout_b = getattr(result, "stdout", b"") or b""
+        stderr_b = getattr(result, "stderr", b"") or b""
+    except subprocess.CalledProcessError as e:
+        rc = e.returncode
+        stdout_b = e.stdout or b""
+        stderr_b = e.stderr or b""
 
+    stdout = stdout_b.decode(errors="replace")
+    stderr = stderr_b.decode(errors="replace")
+
+    if rc == 0:
+        seqs = _parse_fasta_from_text(stdout)
+        logger.debug("ipcr parsed %d products for %s", len(seqs), genome_path)
+        return seqs
+    if rc == 1:
+        logger.info("ipcr: no amplicons for %s", genome_path)
+        return []
+    if rc == 2:
+        raise ValueError(
+            f"ipcr usage/config error on {genome_path}: {stderr.strip() or 'no stderr'}"
+        )
+    raise RuntimeError(
+        f"ipcr failed on {genome_path} (exit {rc}): {stderr.strip() or 'no stderr'}"
+    )
 
 # --------------------------- Per‑genome worker ----------------------------
 
