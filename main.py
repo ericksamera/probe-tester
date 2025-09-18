@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-__VERSION__ = "1.2.0"
+__VERSION__ = "1.3.0"
+__DESCRIPTION__ = "Functional pipeline for testing amplification."
+__AUTHOR__ = "Erick Samera (erick.samera@kpu.ca)"
 
 import sys
 import platform
@@ -12,7 +14,7 @@ from pathlib import Path
 
 from typing import Optional
 
-from modules import io_tools
+from modules.formatting import format_table
 from modules.genome_manager import (
     validate_taxon, get_species_accessions_by_parent_taxid,
     get_accessions_for_species, download_genomes
@@ -266,7 +268,9 @@ def setup_logging(outdir: Path, verbose: bool = False) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Probe/genome pipeline")
+    parser = argparse.ArgumentParser(
+        description=f"probe-tester v{__VERSION__} | {__DESCRIPTION__}",
+        epilog=f"{__AUTHOR__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # --- LIST SUBCOMMAND ---
@@ -407,9 +411,9 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
         "Probe MM",
         "Amplicons",
         "Genomes Tested",
-        "Avg Amplicons/Genome",
-        "Genomes w/ Amplicon",
-        "% Genomes w/ Amplicon"
+        "Avg. Amp./Genome",
+        "Genomes w/ Amp.",
+        "% Genomes w/ Amp."
     ]
 
     for run_name, run_data in run_items:
@@ -445,13 +449,8 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
                     md += "| " + " | ".join(row) + " |\n"
                 print(md)
             else:
-                try:
-                    from tabulate import tabulate
-                    print(tabulate(target_rows, headers=headers, tablefmt="fancy_grid"))
-                except ImportError:
-                    print(" | ".join(headers))
-                    for row in target_rows:
-                        print(" | ".join(row))
+                print(format_table(headers=headers, rows=target_rows))
+        
         # Panel 2: nontargets
         if nontarget_organisms:
             print(f"\n=== Run: {run_name} {'(Non-targets)' if target else ''} ===")
@@ -471,13 +470,7 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
                     md += "| " + " | ".join(row) + " |\n"
                 print(md)
             else:
-                try:
-                    from tabulate import tabulate
-                    print(tabulate(nontarget_rows, headers=headers, tablefmt="fancy_grid"))
-                except ImportError:
-                    print(" | ".join(headers))
-                    for row in nontarget_rows:
-                        print(" | ".join(row))
+                print(format_table(headers=headers, rows=nontarget_rows))
 
 
 def main():
