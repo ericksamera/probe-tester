@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__VERSION__="1.0.0"
+__VERSION__ = "1.2.0"
 
 import sys
 import platform
@@ -19,17 +19,39 @@ from modules.genome_manager import (
 )
 from modules.probe_analysis import analyze_genome_products
 
-def check_dependencies(required=["Bio", "rich"], required_cli=["datasets"]):
+
+def check_dependencies(engine: Optional[str] = None, ipcr_bin: Optional[Path] = None, ipcress_bin: Optional[Path] = None,
+                       required=["Bio", "rich"], required_cli=["datasets"]) -> None:
+    """
+    Verify Python and CLI dependencies. If `engine` is provided, also checks the chosen assay engine executable.
+    """
     missing = []
     for mod in required:
         try:
             __import__(mod)
         except ImportError:
             missing.append(mod)
+
+    # Always required for NCBI downloads (datasets)
+    from shutil import which
     for cli in required_cli:
-        from shutil import which
         if which(cli) is None:
             missing.append(f"{cli} (CLI)")
+
+    # Engine-specific checks (only when running `assay`)
+    if engine:
+        if engine == "ipcr":
+            exe = str(ipcr_bin) if ipcr_bin else "ipcr"
+            if which(exe) is None:
+                # try project-local bin/ipcr
+                local = Path(__file__).resolve().parent / "bin" / ("ipcr.exe" if sys.platform.startswith("win") else "ipcr")
+                if not local.exists():
+                    missing.append("ipcr (CLI)")
+        elif engine == "ipcress":
+            exe = str(ipcress_bin) if ipcress_bin else "ipcress"
+            if which(exe) is None:
+                missing.append("ipcress (CLI)")
+
     if missing:
         print("[ERROR] Missing dependencies:")
         for item in missing:
@@ -60,6 +82,7 @@ def list_command(args):
         print(f"  {len(accessions)} genomes")
         for acc in accessions:
             print(f"    {acc}")
+
 
 def download_command(args):
     parent_mode = args.mode == "parent"
@@ -178,7 +201,10 @@ def assay_command(args):
         primer_min=args.primer_min,
         primer_max=args.primer_max,
         mismatch=args.mismatch,
-        threads=threads
+        threads=threads,
+        engine=args.engine,
+        ipcr_bin=args.ipcr_bin,
+        ipcress_bin=args.ipcress_bin,
     )
 
     metadata = {
@@ -195,6 +221,7 @@ def assay_command(args):
         "probe_tester_version": __VERSION__,
         "python": platform.python_version(),
         "platform": platform.platform(),
+        "engine": args.engine,
     }
 
     output_data = {
@@ -207,6 +234,7 @@ def assay_command(args):
 
     logging.info("Results written to %s under run name '%s'", output_path, run_name)
     print(f"\n[SUCCESS] Run complete!\nResults written to {output_path}\nNext: python main.py summarize --input {output_path}")
+
 
 def summarize_command(args):
     summarize_results(args.input, getattr(args, "format", "text"), args.target)
@@ -236,6 +264,7 @@ def setup_logging(outdir: Path, verbose: bool = False) -> None:
 
     logging.getLogger(__name__).debug("Logging initialized at %s", log_path)
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Probe/genome pipeline")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -244,7 +273,7 @@ def parse_args() -> argparse.Namespace:
     listcmd = subparsers.add_parser("list", help="List available species/genomes for a taxon")
     listcmd.add_argument("--taxon", required=True, help="NCBI taxon name or taxid (parent or species)")
     listcmd.add_argument("--mode", choices=["parent", "species"], default="parent",
-                        help="List all genomes under a parent taxon or just a single species")
+                         help="List all genomes under a parent taxon or just a single species")
 
     # --- DOWNLOAD SUBCOMMAND ---
     dl = subparsers.add_parser("download", help="Download genomes")
@@ -262,13 +291,21 @@ def parse_args() -> argparse.Namespace:
     test.add_argument("--reverse", required=True, help="Reverse primer sequence")
     test.add_argument("--probe", required=False, help="Probe sequence (optional)")
     test.add_argument("--genomes-dir", type=Path, default=Path("./genomes"), help="Genomes directory (output of download)")
-    test.add_argument("--primer-min", type=int, default=60, help="Min product length for IPCRESS")
-    test.add_argument("--primer-max", type=int, default=200, help="Max product length for IPCRESS")
-    test.add_argument("--mismatch", type=int, default=3, help="IPCRESS mismatch parameter")
+    test.add_argument("--primer-min", type=int, default=60, help="Min product length")
+    test.add_argument("--primer-max", type=int, default=200, help="Max product length")
+    test.add_argument("--mismatch", type=int, default=3, help="Max mismatches per primer")
     test.add_argument("--output", type=Path, default=Path("results.json"), help="Output JSON results file")
     test.add_argument("--run-name", type=str, default=None, help="Name for this set of primers/probe results (optional)")
     test.add_argument("--verbose", action="store_true")
     test.add_argument("--threads", type=int, default=1, help="Number of processes to use for parallel genome analysis")
+
+    # Engine selection
+    test.add_argument("--engine", choices=["ipcr", "ipcress"], default="ipcr",
+                      help="Which assay engine to use (default: ipcr)")
+    test.add_argument("--ipcr-bin", type=Path, default=None,
+                      help="Path to ipcr executable (if not in ./bin or PATH)")
+    test.add_argument("--ipcress-bin", type=Path, default=None,
+                      help="Path to ipcress executable (optional)")
 
     # --- SUMMARIZE SUBCOMMAND ---
     summ = subparsers.add_parser("summarize", help="Summarize probe test results")
@@ -277,6 +314,7 @@ def parse_args() -> argparse.Namespace:
     summ.add_argument("--target", nargs="+", help="Organism(s) to treat as targets (exact or glob match, e.g. 'Mycoplasmopsis-bovis' or 'Mycoplasmopsis-*')")
 
     return parser.parse_args()
+
 
 def summarize_results(results_path: Path, output_format: str = "text", target: Optional[list] = None) -> None:
     """Print detailed summary per organism from a results JSON, in text/csv/markdown, with totals and proper case-insensitive panel separation."""
@@ -441,10 +479,15 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
                     for row in nontarget_rows:
                         print(" | ".join(row))
 
-def main():
-    check_dependencies()
 
+def main():
     args = parse_args()
+
+    # Engine-aware dependency check (only relevant for `assay`)
+    if args.command == "assay":
+        check_dependencies(engine=args.engine, ipcr_bin=args.ipcr_bin, ipcress_bin=args.ipcress_bin)
+    else:
+        check_dependencies()
 
     setup_logging(args.outdir if hasattr(args, "outdir") else Path("."), verbose=getattr(args, 'verbose', False))
 
@@ -459,6 +502,7 @@ def main():
         summarize_command(args)
     else:
         print("[ERROR] Unknown command.")
+
 
 if __name__ == "__main__":
     try:
