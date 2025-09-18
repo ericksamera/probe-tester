@@ -306,7 +306,7 @@ def parse_args() -> argparse.Namespace:
     # Engine selection
     test.add_argument("--engine", choices=["ipcr", "ipcress"], default="ipcr",
                       help="Which assay engine to use (default: ipcr)")
-    test.add_argument("--ipcr-bin", type=Path, default=None,
+    test.add_argument("--ipcr-bin", type=Path, default=Path(__file__).resolve().parent / "bin" / "ipcr",
                       help="Path to ipcr executable (if not in ./bin or PATH)")
     test.add_argument("--ipcress-bin", type=Path, default=None,
                       help="Path to ipcress executable (optional)")
