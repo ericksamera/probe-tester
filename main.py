@@ -23,7 +23,7 @@ from modules.probe_analysis import analyze_genome_products
 
 
 def check_dependencies(engine: Optional[str] = None, ipcr_bin: Optional[Path] = None, ipcress_bin: Optional[Path] = None,
-                       required=["Bio", "rich"], required_cli=["datasets"]) -> None:
+                       required=["rich"], required_cli=["datasets"]) -> None:
     """
     Verify Python and CLI dependencies. If `engine` is provided, also checks the chosen assay engine executable.
     """

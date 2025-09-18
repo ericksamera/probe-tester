@@ -7,13 +7,13 @@ Supports fetching all child species under a parent taxon (e.g., genus) or a spec
 
 import json
 import logging
-from typing import Optional, Dict, List, Iterator
+from typing import Any, List, Dict, Iterator, Optional
 from pathlib import Path
 import zipfile
-from io import TextIOWrapper
-from Bio import SeqIO
+import io
 
 from modules import io_tools
+from modules.fasta_io import read_fasta, write_fasta
 
 logger = logging.getLogger(__name__)
 
@@ -144,27 +144,29 @@ def get_genomes_mapping(
     return sample_species_dict
 
 def download_genomes(
-        species: str,
-        accession_list: List[str],
-        work_dir: Path = Path('.'),
-        chunk_size: int = 30,
-        progress=None,
-        overall_task=None
-    ) -> int:
+    species: str,
+    accession_list: List[str],
+    work_dir: Path = Path("."),
+    chunk_size: int = 30,
+    progress: Optional[Any] = None,
+    overall_task: Optional[Any] = None,
+) -> int:
     """
-    Downloads and saves genome FASTA files for the given accession list,
-    downloading in chunks of chunk_size if needed.
-    Returns the number of genome FASTA files written.
-    Supports updating an overall Rich progress bar if progress/overall_task is passed.
+    Download genome FASTAs for `accession_list` into {work_dir}/genomes/{species}.
+    Returns the number of FASTA files written.
+
+    progress/overall_task: optional Rich objects (typed as Any to avoid dependency).
     """
-    genomes_dir = work_dir / "genomes" / species
+    genomes_dir: Path = work_dir / "genomes" / species
     genomes_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = work_dir / "ncbi_dataset.zip"
+    zip_path: Path = work_dir / "ncbi_dataset.zip"
 
-    total = len(accession_list)
-    genomes_counter = 0
+    total: int = len(accession_list)
+    genomes_counter: int = 0
 
-    accession_chunks = [accession_list] if total <= chunk_size else list(chunked(accession_list, chunk_size))
+    accession_chunks: List[List[str]] = (
+        [accession_list] if total <= chunk_size else list(chunked(accession_list, chunk_size))
+    )
 
     def _extract_accession(member_path_str: str) -> str:
         p = Path(member_path_str)
@@ -172,40 +174,40 @@ def download_genomes(
         for c in candidates:
             if c.startswith(("GCA_", "GCF_")):
                 return c
-        # Fallback to the most specific stem
         return candidates[-1]
 
-    if progress and overall_task is not None:
-        # Use a per-species bar below the overall total
-        species_task = progress.add_task(f"[cyan]{species} FASTAs", total=total)
-        for chunk_idx, acc_chunk in enumerate(accession_chunks):
+    def _process_zip() -> None:
+        nonlocal genomes_counter
+        with zipfile.ZipFile(zip_path) as z:
+            fasta_names: List[str] = [name for name in z.namelist() if name.endswith(".fna")]
+            for name in fasta_names:
+                with z.open(name) as handle, io.TextIOWrapper(handle) as fasta_text:
+                    accession: str = _extract_accession(name)
+                    records: List[tuple[str, str, str]] = []
+                    for i, (rid, desc, seq) in enumerate(read_fasta(fasta_text)):
+                        new_id = f"{accession}.{i}"
+                        records.append((new_id, rid, seq))  # (id, desc, seq)
+                    write_fasta(records, genomes_dir / f"{accession}.fna")
+                genomes_counter += 1
+
+    if progress is not None and overall_task is not None:
+        species_task: Any = progress.add_task(f"[cyan]{species} FASTAs", total=total)
+        for acc_chunk in accession_chunks:
             try:
                 io_tools.run_command(
-                    ["datasets", "download", "genome", "accession"] + acc_chunk,
+                    ["datasets", "download", "genome", "accession", *acc_chunk],
                     capture_output=True,
-                    cwd=work_dir
+                    cwd=work_dir,
                 )
             except Exception as e:
                 logger.error("Error running datasets CLI on chunk: %s", e)
                 continue
 
             try:
-                with zipfile.ZipFile(zip_path) as z:
-                    fasta_names = [name for name in z.namelist() if name.endswith(".fna")]
-                    for name in fasta_names:
-                        with z.open(name) as handle:
-                            accession = _extract_accession(name)
-                            fasta_io = TextIOWrapper(handle)
-                            records = []
-                            for i, record in enumerate(SeqIO.parse(fasta_io, "fasta")):
-                                old_id = record.id
-                                record.id = f"{accession}.{i}"
-                                record.description = old_id
-                                records.append(record)
-                            SeqIO.write(records, genomes_dir / f"{accession}.fna", "fasta")
-                        genomes_counter += 1
-                        progress.update(overall_task, advance=1)
-                        progress.update(species_task, advance=1)
+                _process_zip()
+                # advance both bars by count just processed
+                progress.update(overall_task, advance=len(acc_chunk))
+                progress.update(species_task, advance=len(acc_chunk))
             except Exception as e:
                 logger.error("Error processing FASTA files in chunk: %s", e)
             finally:
@@ -219,34 +221,24 @@ def download_genomes(
         progress.remove_task(species_task)
     else:
         print(f"[INFO] Writing {species} FASTAs ({total} total):")
-        for chunk_idx, acc_chunk in enumerate(accession_chunks):
-            print(f"  Downloading chunk {chunk_idx+1}/{len(accession_chunks)} ({len(acc_chunk)} genomes)")
+        for idx, acc_chunk in enumerate(accession_chunks, 1):
+            print(f"  Downloading chunk {idx}/{len(accession_chunks)} ({len(acc_chunk)} genomes)")
             try:
                 io_tools.run_command(
-                    ["datasets", "download", "genome", "accession"] + acc_chunk,
+                    ["datasets", "download", "genome", "accession", *acc_chunk],
                     capture_output=True,
-                    cwd=work_dir
+                    cwd=work_dir,
                 )
             except Exception as e:
                 print(f"[ERROR] Error running datasets CLI on chunk: {e}")
                 continue
 
             try:
-                with zipfile.ZipFile(zip_path) as z:
-                    fasta_names = [name for name in z.namelist() if name.endswith(".fna")]
-                    for name in fasta_names:
-                        with z.open(name) as handle:
-                            accession: str = _extract_accession(name)
-                            fasta_io = TextIOWrapper(handle)
-                            records = []
-                            for i, record in enumerate(SeqIO.parse(fasta_io, "fasta")):
-                                old_id = record.id
-                                record.id = f"{accession}.{i}"
-                                record.description = old_id
-                                records.append(record)
-                            SeqIO.write(records, genomes_dir / f"{accession}.fna", "fasta")
-                        genomes_counter += 1
-                        print(f"    [{genomes_counter}/{total}] {name}")
+                before = genomes_counter
+                _process_zip()
+                processed = genomes_counter - before
+                for _ in range(processed):
+                    print(f"    [{genomes_counter}/{total}] wrote FASTA")
             except Exception as e:
                 print(f"[ERROR] Error processing FASTA files in chunk: {e}")
             finally:
