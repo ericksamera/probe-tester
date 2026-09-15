@@ -5,6 +5,7 @@ Drop-in: supports --engine ipcress | ipcr while keeping probe handling in Python
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, List, Tuple, Optional, Dict
@@ -157,6 +158,77 @@ def run_ipcress(
 # ------------------------------- IPCR runner -------------------------------
 
 
+def _parse_ipcr_jsonl_records(text: str) -> List[Dict[str, Any]]:
+    """Parse the stable ipcr JSONL v1 product schema."""
+    records: List[Dict[str, Any]] = []
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"ipcr JSONL line {line_number} is not valid JSON: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"ipcr JSONL line {line_number} is not a product object"
+            )
+
+        required = {"sequence_id", "start", "end", "length", "type", "seq"}
+        missing = required - set(payload)
+        if missing:
+            raise ValueError(
+                "ipcr JSONL product is missing required fields: "
+                + ", ".join(sorted(missing))
+            )
+
+        sequence = payload["seq"]
+        if not isinstance(sequence, str) or not sequence:
+            raise ValueError("ipcr JSONL product has an empty or non-string seq")
+        sequence = sequence.upper()
+
+        sequence_id = payload["sequence_id"]
+        if not isinstance(sequence_id, str) or not sequence_id:
+            raise ValueError("ipcr JSONL product has an empty sequence_id")
+        product_type = payload["type"]
+        if product_type not in {"forward", "revcomp"}:
+            raise ValueError(f"ipcr JSONL product has unknown type: {product_type!r}")
+
+        try:
+            start = int(payload["start"])
+            end = int(payload["end"])
+            declared_length = int(payload["length"])
+            fwd_mm = int(payload.get("fwd_mm", 0))
+            rev_mm = int(payload.get("rev_mm", 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("ipcr JSONL product contains a non-integer field") from exc
+        if min(start, end, declared_length, fwd_mm, rev_mm) < 0:
+            raise ValueError("ipcr JSONL product contains a negative numeric field")
+        if declared_length != len(sequence):
+            raise ValueError(
+                "ipcr JSONL product length disagrees with seq: "
+                f"declared={declared_length}, observed={len(sequence)}"
+            )
+
+        records.append(
+            {
+                "sequence": sequence,
+                "experiment_id": str(payload.get("experiment_id", "")),
+                "sequence_id": sequence_id,
+                "start": start,
+                "end": end,
+                "length": declared_length,
+                "type": product_type,
+                "fwd_mm": fwd_mm,
+                "rev_mm": rev_mm,
+                "source_file": str(payload.get("source_file", "")),
+            }
+        )
+    return records
+
+
 def _run_ipcr_records(
     forward: str,
     reverse: str,
@@ -168,10 +240,8 @@ def _run_ipcr_records(
     threads: int = 1,
     dry_run: bool = False,
     ipcr_exe: Optional[Path] = None,
-) -> Optional[List[Dict[str, str]]]:
-    """Run Go ``ipcr`` and preserve FASTA headers for each reported product."""
-    import subprocess
-
+) -> Optional[List[Dict[str, Any]]]:
+    """Run Go ``ipcr`` and return structured JSONL v1 product records."""
     exe = str(ipcr_exe) if ipcr_exe else "ipcr"
     cmd = [
         exe,
@@ -191,29 +261,30 @@ def _run_ipcr_records(
         "--threads",
         str(int(threads if threads > 0 else 1)),
         "--output",
-        "fasta",
+        "jsonl",
+        "--products",
         "--sort",
         str(genome_path),
     ]
 
-    try:
-        result = io_tools.run_command(cmd, capture_output=True, dry_run=dry_run)
-        rc = getattr(result, "returncode", 0)
-        stdout_b = getattr(result, "stdout", b"") or b""
-        stderr_b = getattr(result, "stderr", b"") or b""
-    except subprocess.CalledProcessError as e:
-        rc = e.returncode
-        stdout_b = e.stdout or b""
-        stderr_b = e.stderr or b""
-
+    result = io_tools.run_command(
+        cmd,
+        capture_output=True,
+        dry_run=dry_run,
+        check=False,
+    )
+    rc = getattr(result, "returncode", 0)
+    stdout_b = getattr(result, "stdout", b"") or b""
+    stderr_b = getattr(result, "stderr", b"") or b""
     stdout = stdout_b.decode(errors="replace")
     stderr = stderr_b.decode(errors="replace")
 
     if rc == 0:
-        records = _parse_fasta_records_from_text(stdout)
+        records = _parse_ipcr_jsonl_records(stdout)
         logger.debug("ipcr parsed %d products for %s", len(records), genome_path)
         return records
     if rc == 1:
+        # Compatibility with older ipcr builds. v5 defaults no-hit searches to 0.
         logger.info("ipcr: no amplicons for %s", genome_path)
         return []
     if rc == 2:
@@ -251,7 +322,7 @@ def run_ipcr(
     )
     if records is None:
         return None
-    return [record["sequence"] for record in records]
+    return [str(record["sequence"]) for record in records]
 
 
 def _header_fields(header: str) -> Dict[str, str]:
@@ -301,27 +372,27 @@ def _orientation_score(mismatches: Tuple[int, int]) -> Tuple[int, int, int, int]
 
 
 def normalize_ipcr_products(
-    records: List[Dict[str, str]],
+    records: List[Dict[str, Any]],
     forward_primer: str,
     reverse_primer: str,
     probe: Optional[str],
     max_mismatches: int,
 ) -> List[Dict[str, Any]]:
     """
-    Normalize ipcr FASTA records to the assay's forward orientation.
+    Normalize ipcr products to the assay's forward orientation.
 
-    ``ipcr`` can emit the same physical locus in both sequence orientations. The
-    FASTA header carries ``start=``/``end=`` coordinates, so records sharing the
-    same coordinate span are collapsed after orientation normalization. Records
-    without parseable coordinates are retained individually to avoid collapsing
-    distinct loci that happen to have identical sequence.
+    Structured ipcr JSONL records carry ``sequence_id`` and ``source_file`` in
+    addition to product coordinates. Those identifiers are part of the physical
+    locus key so products on different contigs cannot be collapsed merely
+    because their numeric coordinates are identical. Legacy FASTA-like records
+    remain accepted for compatibility, but only structured JSONL records are
+    safe for multi-record genome FASTAs.
     """
     normalized: List[Dict[str, Any]] = []
-    locus_to_index: Dict[Tuple[str, int, int, int], int] = {}
+    locus_to_index: Dict[Tuple[str, str, int, int, int], int] = {}
 
     for record in records:
-        header = record.get("header", "")
-        sequence = record.get("sequence", "").upper()
+        sequence = str(record.get("sequence", "")).upper()
         if not sequence:
             continue
 
@@ -341,9 +412,10 @@ def normalize_ipcr_products(
             orientation = "forward"
 
         if f_mismatches > max_mismatches or r_mismatches > max_mismatches:
+            context = record.get("sequence_id") or record.get("header", "")
             raise RuntimeError(
                 "ipcr product cannot be reconciled with the configured mismatch "
-                f"limit {max_mismatches}: header={header!r}, "
+                f"limit {max_mismatches}: product={context!r}, "
                 f"forward={f_mismatches}, reverse={r_mismatches}"
             )
 
@@ -352,25 +424,61 @@ def normalize_ipcr_products(
         else:
             probe_mismatches, probe_pos = None, None
 
-        fields = _header_fields(header)
-        start = _optional_header_int(fields, "start")
-        end = _optional_header_int(fields, "end")
-        declared_length = _optional_header_int(fields, "len")
-        source_id = _header_source_id(fields)
-        locus_key: Optional[Tuple[str, int, int, int]] = None
-        if source_id and start is not None and end is not None:
+        sequence_id = str(record.get("sequence_id", ""))
+        source_file = str(record.get("source_file", ""))
+        experiment_id = str(record.get("experiment_id", ""))
+        product_type = str(record.get("type", ""))
+
+        start: Optional[int]
+        end: Optional[int]
+        declared_length: Optional[int]
+        product_id: str
+        product_source_id: str
+        product_header: str
+        locus_key: Optional[Tuple[str, str, int, int, int]] = None
+
+        if sequence_id:
+            start = int(record["start"])
+            end = int(record["end"])
+            declared_length = int(record["length"])
+            product_source_id = sequence_id
+            product_id = (
+                f"{experiment_id or 'manual'}:{sequence_id}:"
+                f"{start}-{end}:{product_type or 'product'}"
+            )
+            product_header = (
+                f"{product_id} source_file={source_file} len={declared_length}"
+            )
             locus_key = (
-                source_id,
+                source_file,
+                sequence_id,
                 min(start, end),
                 max(start, end),
                 len(product),
             )
+        else:
+            header = str(record.get("header", ""))
+            fields = _header_fields(header)
+            start = _optional_header_int(fields, "start")
+            end = _optional_header_int(fields, "end")
+            declared_length = _optional_header_int(fields, "len")
+            product_source_id = _header_source_id(fields)
+            product_id = fields.get("id", "")
+            product_header = header
+            if product_source_id and start is not None and end is not None:
+                locus_key = (
+                    "",
+                    product_source_id,
+                    min(start, end),
+                    max(start, end),
+                    len(product),
+                )
 
         item: Dict[str, Any] = {
             "product": product,
-            "product_id": fields.get("id", ""),
-            "product_source_id": source_id,
-            "product_header": header,
+            "product_id": product_id,
+            "product_source_id": product_source_id,
+            "product_header": product_header,
             "product_start": start,
             "product_end": end,
             "product_declared_length": declared_length,
