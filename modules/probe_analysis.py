@@ -6,7 +6,8 @@ Drop-in: supports --engine ipcress | ipcr while keeping probe handling in Python
 from __future__ import annotations
 
 import logging
-from typing import List, Tuple, Optional, Dict
+import re
+from typing import Any, List, Tuple, Optional, Dict
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -23,16 +24,12 @@ _FASTA_GLOBS = ("*.fna", "*.fa", "*.fasta", "*.fna.gz", "*.fa.gz", "*.fasta.gz")
 # ----------------------------- FASTA parsing -----------------------------
 
 
-def _parse_fasta_from_text(
+def _parse_fasta_records_from_text(
     text: str, drop_prefix_tokens: Optional[List[str]] = None
-) -> List[str]:
-    """
-    Very small FASTA parser for CLI outputs we produce (ipcress/ipcr).
-    Returns a list of plain product sequences (uppercased, no gaps).
-    """
-    seqs: List[str] = []
+) -> List[Dict[str, str]]:
+    """Parse FASTA text while preserving each record header and sequence."""
+    records: List[Dict[str, str]] = []
     lines = text.splitlines()
-    # Optionally drop any non‑FASTA chatter lines that contain specific tokens
     if drop_prefix_tokens:
         keep = []
         for ln in lines:
@@ -46,22 +43,33 @@ def _parse_fasta_from_text(
     while i < len(lines):
         ln = lines[i].strip()
         if ln.startswith(">"):
+            header = ln[1:].strip()
             i += 1
             buf: List[str] = []
             while i < len(lines):
                 nxt = lines[i].strip()
                 if nxt.startswith(">"):
                     break
-                if nxt.startswith("--"):  # some tools end blocks with separator lines
+                if nxt.startswith("--"):
                     break
                 if nxt:
                     buf.append(nxt)
                 i += 1
             if buf:
-                seqs.append("".join(buf).upper())
+                records.append({"header": header, "sequence": "".join(buf).upper()})
             continue
         i += 1
-    return seqs
+    return records
+
+
+def _parse_fasta_from_text(
+    text: str, drop_prefix_tokens: Optional[List[str]] = None
+) -> List[str]:
+    """Compatibility wrapper returning only FASTA sequences."""
+    return [
+        record["sequence"]
+        for record in _parse_fasta_records_from_text(text, drop_prefix_tokens)
+    ]
 
 
 # ----------------------------- Probe matching -----------------------------
@@ -149,7 +157,7 @@ def run_ipcress(
 # ------------------------------- IPCR runner -------------------------------
 
 
-def run_ipcr(
+def _run_ipcr_records(
     forward: str,
     reverse: str,
     genome_path: Path,
@@ -160,16 +168,8 @@ def run_ipcr(
     threads: int = 1,
     dry_run: bool = False,
     ipcr_exe: Optional[Path] = None,
-) -> Optional[List[str]]:
-    """
-    Run Go 'ipcr' in FASTA mode and return product sequences.
-
-    Exit codes:
-      0 -> parse FASTA, return sequences
-      1 -> no amplicons found => return []
-      2 -> usage/config error => ValueError
-      3+ -> runtime/IO error   => RuntimeError
-    """
+) -> Optional[List[Dict[str, str]]]:
+    """Run Go ``ipcr`` and preserve FASTA headers for each reported product."""
     import subprocess
 
     exe = str(ipcr_exe) if ipcr_exe else "ipcr"
@@ -208,9 +208,9 @@ def run_ipcr(
     stderr = stderr_b.decode(errors="replace")
 
     if rc == 0:
-        seqs = _parse_fasta_from_text(stdout)
-        logger.debug("ipcr parsed %d products for %s", len(seqs), genome_path)
-        return seqs
+        records = _parse_fasta_records_from_text(stdout)
+        logger.debug("ipcr parsed %d products for %s", len(records), genome_path)
+        return records
     if rc == 1:
         logger.info("ipcr: no amplicons for %s", genome_path)
         return []
@@ -221,6 +221,182 @@ def run_ipcr(
     raise RuntimeError(
         f"ipcr failed on {genome_path} (exit {rc}): {stderr.strip() or 'no stderr'}"
     )
+
+
+def run_ipcr(
+    forward: str,
+    reverse: str,
+    genome_path: Path,
+    *,
+    min_len: int,
+    max_len: int,
+    mismatches: int = 0,
+    threads: int = 1,
+    dry_run: bool = False,
+    ipcr_exe: Optional[Path] = None,
+) -> Optional[List[str]]:
+    """Compatibility API returning only normalized-unaware product sequences."""
+    records = _run_ipcr_records(
+        forward,
+        reverse,
+        genome_path,
+        min_len=min_len,
+        max_len=max_len,
+        mismatches=mismatches,
+        threads=threads,
+        dry_run=dry_run,
+        ipcr_exe=ipcr_exe,
+    )
+    if records is None:
+        return None
+    return [record["sequence"] for record in records]
+
+
+def _header_fields(header: str) -> Dict[str, str]:
+    fields: Dict[str, str] = {}
+    tokens = header.split()
+    if tokens:
+        fields["id"] = tokens[0]
+    for token in tokens[1:]:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        fields[key] = value.rstrip(",;")
+    return fields
+
+
+def _optional_header_int(fields: Dict[str, str], key: str) -> Optional[int]:
+    value = fields.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _header_source_id(fields: Dict[str, str]) -> str:
+    record_id = fields.get("id", "")
+    match = re.match(r"^(?P<source>.+)_\d+$", record_id)
+    return match.group("source") if match else record_id
+
+
+def _primer_edge_mismatches(
+    product: str, forward_primer: str, reverse_primer: str
+) -> Tuple[int, int]:
+    if len(product) < max(len(forward_primer), len(reverse_primer)):
+        raise ValueError("product is shorter than a primer")
+    f_mismatches = count_mismatches(forward_primer, product[: len(forward_primer)])
+    r_mismatches = count_mismatches(
+        reverse_complement(reverse_primer), product[-len(reverse_primer) :]
+    )
+    return f_mismatches, r_mismatches
+
+
+def _orientation_score(mismatches: Tuple[int, int]) -> Tuple[int, int, int, int]:
+    forward, reverse = mismatches
+    return (forward + reverse, max(forward, reverse), forward, reverse)
+
+
+def normalize_ipcr_products(
+    records: List[Dict[str, str]],
+    forward_primer: str,
+    reverse_primer: str,
+    probe: Optional[str],
+    max_mismatches: int,
+) -> List[Dict[str, Any]]:
+    """
+    Normalize ipcr FASTA records to the assay's forward orientation.
+
+    ``ipcr`` can emit the same physical locus in both sequence orientations. The
+    FASTA header carries ``start=``/``end=`` coordinates, so records sharing the
+    same coordinate span are collapsed after orientation normalization. Records
+    without parseable coordinates are retained individually to avoid collapsing
+    distinct loci that happen to have identical sequence.
+    """
+    normalized: List[Dict[str, Any]] = []
+    locus_to_index: Dict[Tuple[str, int, int, int], int] = {}
+
+    for record in records:
+        header = record.get("header", "")
+        sequence = record.get("sequence", "").upper()
+        if not sequence:
+            continue
+
+        forward_mm = _primer_edge_mismatches(sequence, forward_primer, reverse_primer)
+        reverse_sequence = reverse_complement(sequence)
+        reverse_mm = _primer_edge_mismatches(
+            reverse_sequence, forward_primer, reverse_primer
+        )
+
+        if _orientation_score(reverse_mm) < _orientation_score(forward_mm):
+            product = reverse_sequence
+            f_mismatches, r_mismatches = reverse_mm
+            orientation = "reverse_complemented"
+        else:
+            product = sequence
+            f_mismatches, r_mismatches = forward_mm
+            orientation = "forward"
+
+        if f_mismatches > max_mismatches or r_mismatches > max_mismatches:
+            raise RuntimeError(
+                "ipcr product cannot be reconciled with the configured mismatch "
+                f"limit {max_mismatches}: header={header!r}, "
+                f"forward={f_mismatches}, reverse={r_mismatches}"
+            )
+
+        if probe:
+            probe_mismatches, probe_pos = match_probe(probe, product)
+        else:
+            probe_mismatches, probe_pos = None, None
+
+        fields = _header_fields(header)
+        start = _optional_header_int(fields, "start")
+        end = _optional_header_int(fields, "end")
+        declared_length = _optional_header_int(fields, "len")
+        source_id = _header_source_id(fields)
+        locus_key: Optional[Tuple[str, int, int, int]] = None
+        if source_id and start is not None and end is not None:
+            locus_key = (
+                source_id,
+                min(start, end),
+                max(start, end),
+                len(product),
+            )
+
+        item: Dict[str, Any] = {
+            "product": product,
+            "product_id": fields.get("id", ""),
+            "product_source_id": source_id,
+            "product_header": header,
+            "product_start": start,
+            "product_end": end,
+            "product_declared_length": declared_length,
+            "product_orientation": orientation,
+            "duplicate_record_count": 1,
+            "forward_mismatches": f_mismatches,
+            "reverse_mismatches": r_mismatches,
+            "probe_mismatches": probe_mismatches,
+            "probe_position": probe_pos,
+        }
+
+        if locus_key is not None and locus_key in locus_to_index:
+            existing = normalized[locus_to_index[locus_key]]
+            if existing["product"] != product:
+                raise RuntimeError(
+                    "ipcr returned conflicting normalized sequences for one locus: "
+                    f"{locus_key}"
+                )
+            existing["duplicate_record_count"] = (
+                int(existing["duplicate_record_count"]) + 1
+            )
+            continue
+
+        if locus_key is not None:
+            locus_to_index[locus_key] = len(normalized)
+        normalized.append(item)
+
+    return normalized
 
 
 # --------------------------- Per‑genome worker ----------------------------
@@ -246,21 +422,9 @@ def process_genome_job(args: tuple) -> tuple[str, str, list]:
 
     genome_id = genome_path.stem
 
-    # Run engine → get amplicon sequences
-    if engine == "ipcress":
-        products = (
-            run_ipcress(
-                primers_file_path,
-                genome_path,
-                mismatches=mismatch,
-                dry_run=dry_run,
-                ipcress_exe=ipcress_bin,
-            )
-            or []
-        )
-    elif engine == "ipcr":
-        products = (
-            run_ipcr(
+    if engine == "ipcr":
+        records = (
+            _run_ipcr_records(
                 forward_primer,
                 reverse_primer,
                 genome_path,
@@ -273,21 +437,37 @@ def process_genome_job(args: tuple) -> tuple[str, str, list]:
             )
             or []
         )
-    else:
+        product_results = normalize_ipcr_products(
+            records,
+            forward_primer,
+            reverse_primer,
+            probe,
+            mismatch,
+        )
+        return (species_name, genome_id, product_results)
+
+    if engine != "ipcress":
         raise ValueError(f"unknown engine {engine!r}")
 
-    # Score primers (and optional probe) in Python
+    products = (
+        run_ipcress(
+            primers_file_path,
+            genome_path,
+            mismatches=mismatch,
+            dry_run=dry_run,
+            ipcress_exe=ipcress_bin,
+        )
+        or []
+    )
     product_results = []
     for prod in products:
-        f_mismatches = count_mismatches(forward_primer, prod[: len(forward_primer)])
-        r_mismatches = count_mismatches(
-            reverse_complement(reverse_primer), prod[-len(reverse_primer) :]
+        f_mismatches, r_mismatches = _primer_edge_mismatches(
+            prod, forward_primer, reverse_primer
         )
         if probe:
             probe_mismatches, probe_pos = match_probe(probe, prod)
         else:
             probe_mismatches, probe_pos = None, None
-
         product_results.append(
             {
                 "product": prod,
