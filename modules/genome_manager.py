@@ -150,14 +150,18 @@ def get_genomes_mapping(
         organism_name = "-".join(
             entry.get("organism", {}).get("organism_name", "").split()[:2]
         )
-        assembly_name: str = entry.get("assembly_info", {}).get("assembly_name")
+        current_accession = entry.get("current_accession")
 
-        if not assembly_name or not assembly_name.startswith("ASM"):
+        # The NCBI query above is already restricted to latest GenBank
+        # assemblies. Do not impose an additional naming convention on the
+        # assembly_name field: valid GenBank assemblies can have submitter names
+        # such as "JF4428" rather than the common "ASM..." pattern.
+        if not organism_name or not isinstance(current_accession, str):
+            continue
+        if not current_accession.startswith("GCA_"):
             continue
 
-        sample_species_dict.setdefault(organism_name, []).append(
-            entry.get("current_accession")
-        )
+        sample_species_dict.setdefault(organism_name, []).append(current_accession)
 
     return sample_species_dict
 
