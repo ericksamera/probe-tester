@@ -23,6 +23,7 @@ It supports automated download of NCBI genomes, in silico PCR (`IPCRESS`) matchi
 
 - `python >= 3.8`
 - [`ncbi-datasets-cli`](https://www.ncbi.nlm.nih.gov/datasets/docs/v2/download-and-install/)
+- `Go >= 1.22` to build the pinned `ipcr` submodule (not needed when using an external `ipcr` via `--ipcr-bin`)
 - Python packages: (optionally) `rich`,
 
 **Easiest, install with conda**
@@ -30,6 +31,26 @@ It supports automated download of NCBI genomes, in silico PCR (`IPCRESS`) matchi
 ```shell
 mamba env create -f environment.yaml
 ```
+
+### **ipcr submodule**
+
+`probe-tester` uses [`KPU-AGC/ipcr`](https://github.com/KPU-AGC/ipcr) as a
+Git submodule at `third_party/ipcr`. Clone with submodules enabled:
+
+```shell
+git clone --recurse-submodules <probe-tester-url>
+```
+
+For an existing checkout:
+
+```shell
+git submodule update --init --recursive
+```
+
+On the first `assay` run, `probe-tester` builds the pinned submodule revision
+to `bin/ipcr`. If the submodule revision changes, the binary is rebuilt
+automatically. `--ipcr-bin /path/to/ipcr` remains available as an explicit
+override, and a system `ipcr` on `PATH` is used when the submodule is absent.
 
 ---
 

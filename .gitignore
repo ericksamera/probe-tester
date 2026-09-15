@@ -211,3 +211,7 @@ genomes/
 *.zip
 *.txt
 *.json
+# probe-tester builds the pinned ipcr submodule here at runtime.
+/bin/ipcr
+/bin/ipcr.exe
+/bin/ipcr.source-revision

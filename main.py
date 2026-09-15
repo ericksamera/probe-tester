@@ -22,11 +22,11 @@ from modules.genome_manager import (
     download_genomes,
 )
 from modules.probe_analysis import analyze_genome_products
+from modules.ipcr_backend import IPCRBackendError, resolve_ipcr_binary
 
 
 def check_dependencies(
     engine: Optional[str] = None,
-    ipcr_bin: Optional[Path] = None,
     ipcress_bin: Optional[Path] = None,
     required: Sequence[str] = (),
     required_cli: Sequence[str] = (),
@@ -47,23 +47,12 @@ def check_dependencies(
         if which(cli) is None:
             missing.append(f"{cli} (CLI)")
 
-    # Engine-specific checks (only when running `assay`)
-    if engine:
-        if engine == "ipcr":
-            exe = str(ipcr_bin) if ipcr_bin else "ipcr"
-            if which(exe) is None:
-                # try project-local bin/ipcr
-                local = (
-                    Path(__file__).resolve().parent
-                    / "bin"
-                    / ("ipcr.exe" if sys.platform.startswith("win") else "ipcr")
-                )
-                if not local.exists():
-                    missing.append("ipcr (CLI)")
-        elif engine == "ipcress":
-            exe = str(ipcress_bin) if ipcress_bin else "ipcress"
-            if which(exe) is None:
-                missing.append("ipcress (CLI)")
+    # ipcr is resolved separately because it may be built from the pinned Git
+    # submodule. Other engines still use ordinary PATH/executable checks.
+    if engine == "ipcress":
+        exe = str(ipcress_bin) if ipcress_bin else "ipcress"
+        if which(exe) is None:
+            missing.append("ipcress (CLI)")
 
     if missing:
         print("[ERROR] Missing dependencies:")
@@ -71,6 +60,19 @@ def check_dependencies(
             print(f"  - {item}")
         print("Please install required Python modules and CLI tools before running.")
         sys.exit(1)
+
+
+def prepare_assay_engine(args: argparse.Namespace) -> None:
+    """Resolve/build the selected assay engine before analysis starts."""
+    if args.engine == "ipcr":
+        try:
+            args.ipcr_bin = resolve_ipcr_binary(args.ipcr_bin)
+        except IPCRBackendError as exc:
+            print(f"[ERROR] {exc}")
+            sys.exit(1)
+        return
+
+    check_dependencies(engine="ipcress", ipcress_bin=args.ipcress_bin)
 
 
 def list_command(args):
@@ -416,8 +418,12 @@ def parse_args() -> argparse.Namespace:
     test.add_argument(
         "--ipcr-bin",
         type=Path,
-        default=Path(__file__).resolve().parent / "bin" / "ipcr",
-        help="Path to ipcr executable (if not in ./bin or PATH)",
+        default=None,
+        help=(
+            "Explicit path to ipcr. By default probe-tester uses the pinned "
+            "third_party/ipcr submodule, building ./bin/ipcr as needed, then "
+            "falls back to ipcr on PATH."
+        ),
     )
     test.add_argument(
         "--ipcress-bin",
@@ -630,11 +636,7 @@ def main():
 
     # Check only the dependencies required by the selected command.
     if args.command == "assay":
-        check_dependencies(
-            engine=args.engine,
-            ipcr_bin=args.ipcr_bin,
-            ipcress_bin=args.ipcress_bin,
-        )
+        prepare_assay_engine(args)
     elif args.command in {"list", "download"}:
         check_dependencies(required_cli=("datasets",))
     else:  # summarize

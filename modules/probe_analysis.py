@@ -179,19 +179,21 @@ def _run_ipcr_records(
         forward,
         "--reverse",
         reverse,
-        "--sequences",
-        str(genome_path),
         "--min-length",
         str(int(min_len)),
         "--max-length",
         str(int(max_len)),
         "--mismatches",
         str(int(mismatches)),
+        "--terminal-window",
+        "0",
+        "--self=false",
         "--threads",
         str(int(threads if threads > 0 else 1)),
         "--output",
         "fasta",
         "--sort",
+        str(genome_path),
     ]
 
     try:

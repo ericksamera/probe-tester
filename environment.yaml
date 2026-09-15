@@ -3,6 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - ca-certificates=2025.8.3
+  - go>=1.22
   - ncbi-datasets-cli=18.7.0
   - pip:
       - rich==14.0.0
