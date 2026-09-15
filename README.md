@@ -1,4 +1,5 @@
 # probe-tester
+
 `probe-tester` is a modular Python toolkit for evaluating primers and probes against large collections of genomes.
 It supports automated download of NCBI genomes, in silico PCR (`IPCRESS`) matching, summary/statistics reporting, and modern, user-friendly CLI progress indicators.
 
@@ -6,13 +7,13 @@ It supports automated download of NCBI genomes, in silico PCR (`IPCRESS`) matchi
 
 ## **Features**
 
-* **Automated download** of GenBank genomes by species, genus, or custom set (NCBI Datasets CLI required)
-* **Flexible in silico PCR (IPCRESS)**: test any forward/reverse/probe set on downloaded genomes
-* **Multiprocessing support**: scale up to thousands of genomes
-* **Rich progress bars** (if available) or clean fallback output
-* **Summary and specificity panelization**: separates “target” and “non-target” organisms for true molecular diagnostics benchmarking
-* **CSV/Markdown export, table summaries, and metadata in results**
-* **Graceful error handling, dependency checks, and quality-of-life CLI features**
+- **Automated download** of GenBank genomes by species, genus, or custom set (NCBI Datasets CLI required)
+- **Flexible in silico PCR (IPCRESS)**: test any forward/reverse/probe set on downloaded genomes
+- **Multiprocessing support**: scale up to thousands of genomes
+- **Rich progress bars** (if available) or clean fallback output
+- **Summary and specificity panelization**: separates “target” and “non-target” organisms for true molecular diagnostics benchmarking
+- **CSV/Markdown export, table summaries, and metadata in results**
+- **Graceful error handling, dependency checks, and quality-of-life CLI features**
 
 ---
 
@@ -20,11 +21,12 @@ It supports automated download of NCBI genomes, in silico PCR (`IPCRESS`) matchi
 
 ### **Requirements**
 
-* `python >= 3.8`
-* [`ncbi-datasets-cli`](https://www.ncbi.nlm.nih.gov/datasets/docs/v2/download-and-install/)
-* Python packages: (optionally) `rich`,
+- `python >= 3.8`
+- [`ncbi-datasets-cli`](https://www.ncbi.nlm.nih.gov/datasets/docs/v2/download-and-install/)
+- Python packages: (optionally) `rich`,
 
 **Easiest, install with conda**
+
 ```shell
 mamba env create -f environment.yaml
 ```
@@ -36,6 +38,7 @@ mamba env create -f environment.yaml
 Download a specific taxonomic level of genomes:
 
 Ex. Download 5 genomes for the species "Mycoplasmopsis bovis:
+
 ```sh
 python main.py download --taxon "Mycoplasmopsis bovis" --mode species --max-genomes 5
 ```
@@ -65,9 +68,9 @@ python main.py assay \
   --threads 4
 ```
 
-* Uses multiprocessing (`--threads`) if desired for speed.
-* `IPCRESS` is called under the hood.
-* Results are written to a JSON file (named by run or timestamp).
+- Uses multiprocessing (`--threads`) if desired for speed.
+- `IPCRESS` is called under the hood.
+- Results are written to a JSON file (named by run or timestamp).
 
 ---
 
@@ -81,7 +84,7 @@ python main.py summarize --input results-Parker-2017.json \
   --format text
 ```
 
-Or for all *Mycoplasmopsis-* species:
+Or for all _Mycoplasmopsis-_ species:
 
 ```sh
 python main.py summarize --input results-Parker-2017.json \
@@ -98,7 +101,7 @@ python main.py summarize --input results.json --format csv --target "Mycoplasmop
 
 ## **Advanced Usage**
 
-* **List available species/genomes:**
+- **List available species/genomes:**
 
   ```sh
   python main.py list --taxon "Mycoplasmopsis" --mode parent
@@ -108,10 +111,10 @@ python main.py summarize --input results.json --format csv --target "Mycoplasmop
 
 ## **Best Practices**
 
-* Use `--dry-run` to preview large downloads before running them.
-* Use `--run-name` for descriptive result files.
-* Use `--threads N` on modern CPUs for much faster assay runs.
-* Regularly update the NCBI Datasets CLI for the latest assembly info.
+- Use `--dry-run` to preview large downloads before running them.
+- Use `--run-name` for descriptive result files.
+- Use `--threads N` on modern CPUs for much faster assay runs.
+- Regularly update the NCBI Datasets CLI for the latest assembly info.
 
 ---
 

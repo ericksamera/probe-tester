@@ -12,13 +12,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def run_command(
     command: List[str],
     capture_output: bool = False,
     dry_run: bool = False,
     check: bool = True,
     cwd: Optional[Path] = None,
-    env: Optional[dict[str, str]] = None
+    env: Optional[dict[str, str]] = None,
 ) -> Optional[subprocess.CompletedProcess[Any]]:
     """
     Runs a shell command.
@@ -49,7 +50,7 @@ def run_command(
             capture_output=capture_output,
             check=check,
             cwd=str(cwd) if cwd else None,
-            env=env
+            env=env,
         )
     except Exception as e:
         logger.error("Command failed: %s", e)
@@ -59,10 +60,8 @@ def run_command(
     logger.debug("Command completed in %.2fs", end - start)
     return result if capture_output else None
 
-def ask(
-    prompt: str,
-    default: Optional[str] = None
-) -> str:
+
+def ask(prompt: str, default: Optional[str] = None) -> str:
     """
     Prompts the user for input, showing a default value.
 
@@ -76,5 +75,6 @@ def ask(
     show_default = f" [{default}]" if default else ""
     response = input(f"{prompt}{show_default}: ").strip()
     return response if response else (default if default is not None else "")
+
 
 # ---

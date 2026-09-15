@@ -8,6 +8,7 @@ API:
   - write_record(handle, rid, seq, desc=None, width=80)
   - open_guess(path, mode) -> TextIO/BinaryIO for plain/gz/'-'
 """
+
 from __future__ import annotations
 
 from gzip import GzipFile
@@ -128,6 +129,7 @@ def read_fasta(
     finally:
         if _close:
             fh.close()
+
 
 def write_fasta(
     records: Iterable[Union[Tuple[str, str], Tuple[str, str, str]]],

@@ -5,4 +5,4 @@ dependencies:
   - ca-certificates=2025.8.3
   - ncbi-datasets-cli=18.7.0
   - pip:
-    - rich==14.0.0
+      - rich==14.0.0

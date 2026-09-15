@@ -2,6 +2,7 @@
 modules/probe_analysis.py
 Drop-in: supports --engine ipcress | ipcr while keeping probe handling in Python.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,10 @@ _FASTA_GLOBS = ("*.fna", "*.fa", "*.fasta", "*.fna.gz", "*.fa.gz", "*.fasta.gz")
 
 # ----------------------------- FASTA parsing -----------------------------
 
-def _parse_fasta_from_text(text: str, drop_prefix_tokens: Optional[List[str]] = None) -> List[str]:
+
+def _parse_fasta_from_text(
+    text: str, drop_prefix_tokens: Optional[List[str]] = None
+) -> List[str]:
     """
     Very small FASTA parser for CLI outputs we produce (ipcress/ipcr).
     Returns a list of plain product sequences (uppercased, no gaps).
@@ -62,6 +66,7 @@ def _parse_fasta_from_text(text: str, drop_prefix_tokens: Optional[List[str]] = 
 
 # ----------------------------- Probe matching -----------------------------
 
+
 def match_probe(probe: str, sequence: str) -> Tuple[int, int]:
     """
     Find the best match (minimum mismatches) for a probe in a target sequence.
@@ -72,7 +77,7 @@ def match_probe(probe: str, sequence: str) -> Tuple[int, int]:
     min_mismatches = len(probe)
     best_pos = -1
     for i in range(len(sequence) - len(probe) + 1):
-        window = sequence[i:i + len(probe)]
+        window = sequence[i : i + len(probe)]
         mismatches = count_mismatches(probe, window)
         if mismatches < min_mismatches:
             min_mismatches = mismatches
@@ -83,6 +88,7 @@ def match_probe(probe: str, sequence: str) -> Tuple[int, int]:
 
 
 # ----------------------------- IPCRESS runner -----------------------------
+
 
 def write_ipcress_primers_file(
     forward: str,
@@ -112,13 +118,23 @@ def run_ipcress(
     We request product sequences and suppress pretty/tabular noise.
     """
     exe = str(ipcress_exe) if ipcress_exe else "ipcress"
-    result = io_tools.run_command([
-        exe, str(primers_path), str(genome_path),
-        "--mismatch", str(mismatches),
-        "--seed", "0",
-        "--pretty", "false",
-        "--products", "true",
-    ], capture_output=True, dry_run=dry_run)
+    result = io_tools.run_command(
+        [
+            exe,
+            str(primers_path),
+            str(genome_path),
+            "--mismatch",
+            str(mismatches),
+            "--seed",
+            "0",
+            "--pretty",
+            "false",
+            "--products",
+            "true",
+        ],
+        capture_output=True,
+        dry_run=dry_run,
+    )
     if not result:
         logger.warning("No ipcress result for %s vs %s", primers_path, genome_path)
         return None
@@ -131,6 +147,7 @@ def run_ipcress(
 
 
 # ------------------------------- IPCR runner -------------------------------
+
 
 def run_ipcr(
     forward: str,
@@ -158,14 +175,22 @@ def run_ipcr(
     exe = str(ipcr_exe) if ipcr_exe else "ipcr"
     cmd = [
         exe,
-        "--forward", forward,
-        "--reverse", reverse,
-        "--sequences", str(genome_path),
-        "--min-length", str(int(min_len)),
-        "--max-length", str(int(max_len)),
-        "--mismatches", str(int(mismatches)),
-        "--threads", str(int(threads if threads > 0 else 1)),
-        "--output", "fasta",
+        "--forward",
+        forward,
+        "--reverse",
+        reverse,
+        "--sequences",
+        str(genome_path),
+        "--min-length",
+        str(int(min_len)),
+        "--max-length",
+        str(int(max_len)),
+        "--mismatches",
+        str(int(mismatches)),
+        "--threads",
+        str(int(threads if threads > 0 else 1)),
+        "--output",
+        "fasta",
         "--sort",
     ]
 
@@ -197,61 +222,87 @@ def run_ipcr(
         f"ipcr failed on {genome_path} (exit {rc}): {stderr.strip() or 'no stderr'}"
     )
 
+
 # --------------------------- Per‑genome worker ----------------------------
+
 
 def process_genome_job(args: tuple) -> tuple[str, str, list]:
     """Worker for multiprocessing."""
     (
-        engine, forward_primer, reverse_primer, probe,
-        primers_file_path,      # may be None for ipcr
-        species_name, genome_path,
-        mismatch, primer_min, primer_max,
-        dry_run, ipcr_bin, ipcress_bin,
+        engine,
+        forward_primer,
+        reverse_primer,
+        probe,
+        primers_file_path,  # may be None for ipcr
+        species_name,
+        genome_path,
+        mismatch,
+        primer_min,
+        primer_max,
+        dry_run,
+        ipcr_bin,
+        ipcress_bin,
     ) = args
 
     genome_id = genome_path.stem
 
     # Run engine → get amplicon sequences
     if engine == "ipcress":
-        products = run_ipcress(
-            primers_file_path, genome_path,
-            mismatches=mismatch, dry_run=dry_run,
-            ipcress_exe=ipcress_bin,
-        ) or []
+        products = (
+            run_ipcress(
+                primers_file_path,
+                genome_path,
+                mismatches=mismatch,
+                dry_run=dry_run,
+                ipcress_exe=ipcress_bin,
+            )
+            or []
+        )
     elif engine == "ipcr":
-        products = run_ipcr(
-            forward_primer, reverse_primer, genome_path,
-            min_len=primer_min, max_len=primer_max,
-            mismatches=mismatch, threads=1, dry_run=dry_run,
-            ipcr_exe=ipcr_bin,
-        ) or []
+        products = (
+            run_ipcr(
+                forward_primer,
+                reverse_primer,
+                genome_path,
+                min_len=primer_min,
+                max_len=primer_max,
+                mismatches=mismatch,
+                threads=1,
+                dry_run=dry_run,
+                ipcr_exe=ipcr_bin,
+            )
+            or []
+        )
     else:
         raise ValueError(f"unknown engine {engine!r}")
 
     # Score primers (and optional probe) in Python
     product_results = []
     for prod in products:
-        f_mismatches = count_mismatches(forward_primer, prod[:len(forward_primer)])
+        f_mismatches = count_mismatches(forward_primer, prod[: len(forward_primer)])
         r_mismatches = count_mismatches(
-            reverse_complement(reverse_primer), prod[-len(reverse_primer):]
+            reverse_complement(reverse_primer), prod[-len(reverse_primer) :]
         )
         if probe:
             probe_mismatches, probe_pos = match_probe(probe, prod)
         else:
             probe_mismatches, probe_pos = None, None
 
-        product_results.append({
-            "product": prod,
-            "forward_mismatches": f_mismatches,
-            "reverse_mismatches": r_mismatches,
-            "probe_mismatches": probe_mismatches,
-            "probe_position": probe_pos,
-        })
+        product_results.append(
+            {
+                "product": prod,
+                "forward_mismatches": f_mismatches,
+                "reverse_mismatches": r_mismatches,
+                "probe_mismatches": probe_mismatches,
+                "probe_position": probe_pos,
+            }
+        )
 
     return (species_name, genome_id, product_results)
 
 
 # --------------------------- Public entry point ---------------------------
+
 
 def analyze_genome_products(
     *,
@@ -283,7 +334,9 @@ def analyze_genome_products(
     # Prepare ipcress primer file if needed
     primers_file: Optional[Path] = None
     if engine == "ipcress":
-        primers_file = write_ipcress_primers_file(forward_primer, reverse_primer, primer_min, primer_max)
+        primers_file = write_ipcress_primers_file(
+            forward_primer, reverse_primer, primer_min, primer_max
+        )
 
     # Build job list
     genomes_dir = Path(genomes_dir)
@@ -299,25 +352,43 @@ def analyze_genome_products(
             genome_paths.extend(species_dir.glob(pat))
         genome_paths = sorted(set(genome_paths))
         for gp in genome_paths:
-            jobs.append((
-                engine, forward_primer, reverse_primer, probe,
-                primers_file,
-                species_name, gp,
-                mismatch, primer_min, primer_max,
-                dry_run, ipcr_bin, ipcress_bin,
-            ))
+            jobs.append(
+                (
+                    engine,
+                    forward_primer,
+                    reverse_primer,
+                    probe,
+                    primers_file,
+                    species_name,
+                    gp,
+                    mismatch,
+                    primer_min,
+                    primer_max,
+                    dry_run,
+                    ipcr_bin,
+                    ipcress_bin,
+                )
+            )
 
     # Execute
     if threads and threads > 1:
         try:
             import rich  # optional progress UI
+
             _has_rich = True
         except ImportError:
             _has_rich = False
 
         if _has_rich:
-            from rich.progress import Progress, BarColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
+            from rich.progress import (
+                Progress,
+                BarColumn,
+                TimeElapsedColumn,
+                TimeRemainingColumn,
+                TextColumn,
+            )
             from rich.console import Console
+
             console = Console()
             with Progress(
                 TextColumn("[progress.description]{task.description}"),
@@ -339,7 +410,9 @@ def analyze_genome_products(
         else:
             print(f"Analyzing {len(jobs)} genomes with {threads} processes")
             with ProcessPoolExecutor(max_workers=threads) as ex:
-                for i, fut in enumerate(as_completed([ex.submit(process_genome_job, j) for j in jobs]), 1):
+                for i, fut in enumerate(
+                    as_completed([ex.submit(process_genome_job, j) for j in jobs]), 1
+                ):
                     species_name, genome_id, product_results = fut.result()
                     results[species_name][genome_id] = product_results
                     print(f"[{i}/{len(jobs)}] {species_name}:{genome_id}")

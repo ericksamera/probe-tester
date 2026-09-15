@@ -9,9 +9,9 @@ setup(
     packages=find_packages(),
     py_modules=["main"],
     install_requires=[
-        "rich",      # optional, but recommended
+        "rich",  # optional, but recommended
     ],
-    python_requires='>=3.8',
+    python_requires=">=3.8",
     entry_points={
         "console_scripts": [
             "probe-tester=main:main",

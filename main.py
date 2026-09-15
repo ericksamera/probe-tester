@@ -16,14 +16,21 @@ from typing import Optional
 
 from modules.formatting import format_table
 from modules.genome_manager import (
-    validate_taxon, get_species_accessions_by_parent_taxid,
-    get_accessions_for_species, download_genomes
+    validate_taxon,
+    get_species_accessions_by_parent_taxid,
+    get_accessions_for_species,
+    download_genomes,
 )
 from modules.probe_analysis import analyze_genome_products
 
 
-def check_dependencies(engine: Optional[str] = None, ipcr_bin: Optional[Path] = None, ipcress_bin: Optional[Path] = None,
-                       required=["rich"], required_cli=["datasets"]) -> None:
+def check_dependencies(
+    engine: Optional[str] = None,
+    ipcr_bin: Optional[Path] = None,
+    ipcress_bin: Optional[Path] = None,
+    required=["rich"],
+    required_cli=["datasets"],
+) -> None:
     """
     Verify Python and CLI dependencies. If `engine` is provided, also checks the chosen assay engine executable.
     """
@@ -36,6 +43,7 @@ def check_dependencies(engine: Optional[str] = None, ipcr_bin: Optional[Path] = 
 
     # Always required for NCBI downloads (datasets)
     from shutil import which
+
     for cli in required_cli:
         if which(cli) is None:
             missing.append(f"{cli} (CLI)")
@@ -46,7 +54,11 @@ def check_dependencies(engine: Optional[str] = None, ipcr_bin: Optional[Path] = 
             exe = str(ipcr_bin) if ipcr_bin else "ipcr"
             if which(exe) is None:
                 # try project-local bin/ipcr
-                local = Path(__file__).resolve().parent / "bin" / ("ipcr.exe" if sys.platform.startswith("win") else "ipcr")
+                local = (
+                    Path(__file__).resolve().parent
+                    / "bin"
+                    / ("ipcr.exe" if sys.platform.startswith("win") else "ipcr")
+                )
                 if not local.exists():
                     missing.append("ipcr (CLI)")
         elif engine == "ipcress":
@@ -103,16 +115,30 @@ def download_command(args):
         logging.info("Would download the following species and genome counts:")
         for species, accessions in species_list:
             count = len(accessions)
-            limited = f" (limited to {args.max_genomes})" if args.max_genomes and count > args.max_genomes else ""
-            print(f"  {species}: {min(count, args.max_genomes or count)} genomes{limited}")
+            limited = (
+                f" (limited to {args.max_genomes})"
+                if args.max_genomes and count > args.max_genomes
+                else ""
+            )
+            print(
+                f"  {species}: {min(count, args.max_genomes or count)} genomes{limited}"
+            )
 
         # Prompt for confirmation if a large download
         species_total = len(species_list)
-        genome_total = sum(len(accessions) if not args.max_genomes else min(len(accessions), args.max_genomes)
-                           for _, accessions in species_list)
+        genome_total = sum(
+            (
+                len(accessions)
+                if not args.max_genomes
+                else min(len(accessions), args.max_genomes)
+            )
+            for _, accessions in species_list
+        )
         BIG_DOWNLOAD_THRESHOLD = 500
         if not getattr(args, "force", False) and genome_total >= BIG_DOWNLOAD_THRESHOLD:
-            print(f"[WARNING] You are about to download {genome_total} genomes ({species_total} species).")
+            print(
+                f"[WARNING] You are about to download {genome_total} genomes ({species_total} species)."
+            )
             ans = input("Proceed? [y/N]: ").strip().lower()
             if not (ans == "y" or ans == "yes"):
                 print("Aborted.")
@@ -121,15 +147,25 @@ def download_command(args):
         if not args.dry_run:
             try:
                 import rich
+
                 rich_available = True
             except ImportError:
                 rich_available = False
 
             if rich_available:
-                from rich.progress import Progress, BarColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
+                from rich.progress import (
+                    Progress,
+                    BarColumn,
+                    TimeElapsedColumn,
+                    TimeRemainingColumn,
+                    TextColumn,
+                )
                 from rich.console import Console
-                total_fastas = sum(min(len(acc), args.max_genomes) if args.max_genomes else len(acc)
-                                  for _, acc in species_list)
+
+                total_fastas = sum(
+                    min(len(acc), args.max_genomes) if args.max_genomes else len(acc)
+                    for _, acc in species_list
+                )
                 console = Console()
                 with Progress(
                     TextColumn("[progress.description]{task.description}"),
@@ -141,41 +177,61 @@ def download_command(args):
                     console=console,
                     transient=False,
                 ) as progress:
-                    overall_task = progress.add_task("[magenta]Total FASTAs", total=total_fastas)
+                    overall_task = progress.add_task(
+                        "[magenta]Total FASTAs", total=total_fastas
+                    )
                     for species, accessions in species_list:
                         if args.max_genomes:
-                            accessions = accessions[:args.max_genomes]
+                            accessions = accessions[: args.max_genomes]
                         download_genomes(
                             species,
                             accessions,
                             work_dir=args.outdir,
                             progress=progress,
-                            overall_task=overall_task
+                            overall_task=overall_task,
                         )
-                        logging.debug("Downloaded %d genomes for %s", len(accessions), species)
+                        logging.debug(
+                            "Downloaded %d genomes for %s", len(accessions), species
+                        )
             else:
                 print(f"[INFO] Downloading {len(species_list)} species:")
                 for i, (species, accessions) in enumerate(species_list, 1):
                     if args.max_genomes:
-                        accessions = accessions[:args.max_genomes]
-                    print(f"  [{i}/{len(species_list)}] {species} ({len(accessions)} genomes)")
+                        accessions = accessions[: args.max_genomes]
+                    print(
+                        f"  [{i}/{len(species_list)}] {species} ({len(accessions)} genomes)"
+                    )
                     download_genomes(species, accessions, work_dir=args.outdir)
-                    logging.info("Downloaded %d genomes for %s", len(accessions), species)
-        print(f"\n[SUCCESS] Run complete!\nNext: \n python main.py assay --forward <FWD> --reverse <REV> --probe <PROBE>")
+                    logging.info(
+                        "Downloaded %d genomes for %s", len(accessions), species
+                    )
+        print(
+            "\n[SUCCESS] Run complete!\nNext: \n python main.py assay --forward <FWD> --reverse <REV> --probe <PROBE>"
+        )
     else:  # mode == "species"
         accessions = get_accessions_for_species(taxid, output_dir=args.outdir)
         if not accessions:
             logging.error("No genomes found for the given species.")
             return
         count = len(accessions)
-        limited = f" (limited to {args.max_genomes})" if args.max_genomes and count > args.max_genomes else ""
-        print(f"Would download: {min(count, args.max_genomes or count)} genomes for {sci_name}{limited}")
+        limited = (
+            f" (limited to {args.max_genomes})"
+            if args.max_genomes and count > args.max_genomes
+            else ""
+        )
+        print(
+            f"Would download: {min(count, args.max_genomes or count)} genomes for {sci_name}{limited}"
+        )
         if not args.dry_run:
             if args.max_genomes:
-                accessions = accessions[:args.max_genomes]
-            download_genomes(sci_name.replace(" ", "-"), accessions, work_dir=args.outdir)
+                accessions = accessions[: args.max_genomes]
+            download_genomes(
+                sci_name.replace(" ", "-"), accessions, work_dir=args.outdir
+            )
             logging.info("Downloaded %d genomes for %s", len(accessions), sci_name)
-        print(f"\n[SUCCESS] Run complete!\nNext: \n python main.py assay --forward <FWD> --reverse <REV> --probe <PROBE>")
+        print(
+            "\n[SUCCESS] Run complete!\nNext: \n python main.py assay --forward <FWD> --reverse <REV> --probe <PROBE>"
+        )
 
 
 def assay_command(args):
@@ -188,7 +244,7 @@ def assay_command(args):
         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"run_{now}"
 
-    slug = re.sub(r'[^A-Za-z0-9._-]', '_', run_name.strip())
+    slug = re.sub(r"[^A-Za-z0-9._-]", "_", run_name.strip())
     if args.output == Path("results.json"):
         output_path = Path(f"results-{slug}.json")
     else:
@@ -226,16 +282,15 @@ def assay_command(args):
         "engine": args.engine,
     }
 
-    output_data = {
-        "_metadata": metadata,
-        run_name: results
-    }
+    output_data = {"_metadata": metadata, run_name: results}
 
     with open(output_path, "w") as f:
         json.dump(output_data, f, indent=2)
 
     logging.info("Results written to %s under run name '%s'", output_path, run_name)
-    print(f"\n[SUCCESS] Run complete!\nResults written to {output_path}\nNext: python main.py summarize --input {output_path}")
+    print(
+        f"\n[SUCCESS] Run complete!\nResults written to {output_path}\nNext: python main.py summarize --input {output_path}"
+    )
 
 
 def summarize_command(args):
@@ -259,9 +314,12 @@ def setup_logging(outdir: Path, verbose: bool = False) -> None:
     # File handler
     f_handler = logging.FileHandler(log_path, encoding="utf-8")
     f_handler.setLevel(logging.DEBUG)
-    f_handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"))
+    f_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
     root.addHandler(f_handler)
 
     logging.getLogger(__name__).debug("Logging initialized at %s", log_path)
@@ -270,57 +328,131 @@ def setup_logging(outdir: Path, verbose: bool = False) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=f"probe-tester v{__VERSION__} | {__DESCRIPTION__}",
-        epilog=f"{__AUTHOR__}")
+        epilog=f"{__AUTHOR__}",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # --- LIST SUBCOMMAND ---
-    listcmd = subparsers.add_parser("list", help="List available species/genomes for a taxon")
-    listcmd.add_argument("--taxon", required=True, help="NCBI taxon name or taxid (parent or species)")
-    listcmd.add_argument("--mode", choices=["parent", "species"], default="parent",
-                         help="List all genomes under a parent taxon or just a single species")
+    listcmd = subparsers.add_parser(
+        "list", help="List available species/genomes for a taxon"
+    )
+    listcmd.add_argument(
+        "--taxon", required=True, help="NCBI taxon name or taxid (parent or species)"
+    )
+    listcmd.add_argument(
+        "--mode",
+        choices=["parent", "species"],
+        default="parent",
+        help="List all genomes under a parent taxon or just a single species",
+    )
 
     # --- DOWNLOAD SUBCOMMAND ---
     dl = subparsers.add_parser("download", help="Download genomes")
-    dl.add_argument("--taxon", required=True, help="NCBI taxon name or taxid (parent or species)")
-    dl.add_argument("--mode", choices=["parent", "species"], default="parent",
-                    help="Download all genomes under a parent taxon or just a single species")
+    dl.add_argument(
+        "--taxon", required=True, help="NCBI taxon name or taxid (parent or species)"
+    )
+    dl.add_argument(
+        "--mode",
+        choices=["parent", "species"],
+        default="parent",
+        help="Download all genomes under a parent taxon or just a single species",
+    )
     dl.add_argument("--outdir", type=Path, default=Path("."), help="Output directory")
-    dl.add_argument("--max-genomes", type=int, default=None, help="Limit number of genomes per species (optional)")
+    dl.add_argument(
+        "--max-genomes",
+        type=int,
+        default=None,
+        help="Limit number of genomes per species (optional)",
+    )
     dl.add_argument("--verbose", action="store_true")
-    dl.add_argument("--dry-run", action="store_true", help="Preview what would be downloaded, but do not download")
+    dl.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be downloaded, but do not download",
+    )
 
     # --- TEST SUBCOMMAND ---
     test = subparsers.add_parser("assay", help="Test probes on downloaded genomes")
     test.add_argument("--forward", required=True, help="Forward primer sequence")
     test.add_argument("--reverse", required=True, help="Reverse primer sequence")
     test.add_argument("--probe", required=False, help="Probe sequence (optional)")
-    test.add_argument("--genomes-dir", type=Path, default=Path("./genomes"), help="Genomes directory (output of download)")
+    test.add_argument(
+        "--genomes-dir",
+        type=Path,
+        default=Path("./genomes"),
+        help="Genomes directory (output of download)",
+    )
     test.add_argument("--primer-min", type=int, default=60, help="Min product length")
     test.add_argument("--primer-max", type=int, default=200, help="Max product length")
-    test.add_argument("--mismatch", type=int, default=3, help="Max mismatches per primer")
-    test.add_argument("--output", type=Path, default=Path("results.json"), help="Output JSON results file")
-    test.add_argument("--run-name", type=str, default=None, help="Name for this set of primers/probe results (optional)")
+    test.add_argument(
+        "--mismatch", type=int, default=3, help="Max mismatches per primer"
+    )
+    test.add_argument(
+        "--output",
+        type=Path,
+        default=Path("results.json"),
+        help="Output JSON results file",
+    )
+    test.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Name for this set of primers/probe results (optional)",
+    )
     test.add_argument("--verbose", action="store_true")
-    test.add_argument("--threads", type=int, default=1, help="Number of processes to use for parallel genome analysis")
+    test.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="Number of processes to use for parallel genome analysis",
+    )
 
     # Engine selection
-    test.add_argument("--engine", choices=["ipcr", "ipcress"], default="ipcr",
-                      help="Which assay engine to use (default: ipcr)")
-    test.add_argument("--ipcr-bin", type=Path, default=Path(__file__).resolve().parent / "bin" / "ipcr",
-                      help="Path to ipcr executable (if not in ./bin or PATH)")
-    test.add_argument("--ipcress-bin", type=Path, default=None,
-                      help="Path to ipcress executable (optional)")
+    test.add_argument(
+        "--engine",
+        choices=["ipcr", "ipcress"],
+        default="ipcr",
+        help="Which assay engine to use (default: ipcr)",
+    )
+    test.add_argument(
+        "--ipcr-bin",
+        type=Path,
+        default=Path(__file__).resolve().parent / "bin" / "ipcr",
+        help="Path to ipcr executable (if not in ./bin or PATH)",
+    )
+    test.add_argument(
+        "--ipcress-bin",
+        type=Path,
+        default=None,
+        help="Path to ipcress executable (optional)",
+    )
 
     # --- SUMMARIZE SUBCOMMAND ---
     summ = subparsers.add_parser("summarize", help="Summarize probe test results")
-    summ.add_argument("--input", type=Path, default=Path("results.json"), help="Input JSON results file")
-    summ.add_argument("--format", choices=["text", "csv", "markdown"], default="text", help="Output format")
-    summ.add_argument("--target", nargs="+", help="Organism(s) to treat as targets (exact or glob match, e.g. 'Mycoplasmopsis-bovis' or 'Mycoplasmopsis-*')")
+    summ.add_argument(
+        "--input",
+        type=Path,
+        default=Path("results.json"),
+        help="Input JSON results file",
+    )
+    summ.add_argument(
+        "--format",
+        choices=["text", "csv", "markdown"],
+        default="text",
+        help="Output format",
+    )
+    summ.add_argument(
+        "--target",
+        nargs="+",
+        help="Organism(s) to treat as targets (exact or glob match, e.g. 'Mycoplasmopsis-bovis' or 'Mycoplasmopsis-*')",
+    )
 
     return parser.parse_args()
 
 
-def summarize_results(results_path: Path, output_format: str = "text", target: Optional[list] = None) -> None:
+def summarize_results(
+    results_path: Path, output_format: str = "text", target: Optional[list] = None
+) -> None:
     """Print detailed summary per organism from a results JSON, in text/csv/markdown, with totals and proper case-insensitive panel separation."""
     import csv
     from io import StringIO
@@ -333,7 +465,9 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
 
     def build_rows_and_totals(run_data, selected_organisms):
         rows = []
-        grand_fwd = grand_rev = grand_probe = grand_amplicons = grand_genomes = grand_genomes_with_hits = 0
+        grand_fwd = grand_rev = grand_probe = grand_amplicons = grand_genomes = (
+            grand_genomes_with_hits
+        ) = 0
         grand_probe_n = 0
         for organism in selected_organisms:
             genomes = run_data[organism]
@@ -356,22 +490,29 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
             avg_rev = total_rev / total_amplicons if total_amplicons else "-"
             avg_probe = (total_probe / total_probe_n) if total_probe_n else "-"
             avg_amplicons_per_genome = (
-                total_amplicons / n_genomes_with_hits
-                if n_genomes_with_hits else "-"
+                total_amplicons / n_genomes_with_hits if n_genomes_with_hits else "-"
             )
-            fraction_with_hits = (n_genomes_with_hits / n_genomes * 100) if n_genomes else 0
+            fraction_with_hits = (
+                (n_genomes_with_hits / n_genomes * 100) if n_genomes else 0
+            )
 
-            rows.append([
-                organism,
-                f"{avg_fwd:.2f}" if isinstance(avg_fwd, float) else "-",
-                f"{avg_rev:.2f}" if isinstance(avg_rev, float) else "-",
-                f"{avg_probe:.2f}" if isinstance(avg_probe, float) else "-",
-                str(total_amplicons),
-                str(n_genomes),
-                f"{avg_amplicons_per_genome:.2f}" if isinstance(avg_amplicons_per_genome, float) else "-",
-                str(n_genomes_with_hits),
-                f"{fraction_with_hits:.1f}%"
-            ])
+            rows.append(
+                [
+                    organism,
+                    f"{avg_fwd:.2f}" if isinstance(avg_fwd, float) else "-",
+                    f"{avg_rev:.2f}" if isinstance(avg_rev, float) else "-",
+                    f"{avg_probe:.2f}" if isinstance(avg_probe, float) else "-",
+                    str(total_amplicons),
+                    str(n_genomes),
+                    (
+                        f"{avg_amplicons_per_genome:.2f}"
+                        if isinstance(avg_amplicons_per_genome, float)
+                        else "-"
+                    ),
+                    str(n_genomes_with_hits),
+                    f"{fraction_with_hits:.1f}%",
+                ]
+            )
 
             grand_fwd += total_fwd
             grand_rev += total_rev
@@ -386,9 +527,12 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
         grand_avg_probe = (grand_probe / grand_probe_n) if grand_probe_n else "-"
         grand_avg_amp_per_genome = (
             grand_amplicons / grand_genomes_with_hits
-            if grand_genomes_with_hits else "-"
+            if grand_genomes_with_hits
+            else "-"
         )
-        grand_frac_with_hits = (grand_genomes_with_hits / grand_genomes * 100) if grand_genomes else 0
+        grand_frac_with_hits = (
+            (grand_genomes_with_hits / grand_genomes * 100) if grand_genomes else 0
+        )
 
         total_row = [
             "[TOTAL]",
@@ -397,9 +541,13 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
             f"{grand_avg_probe:.2f}" if isinstance(grand_avg_probe, float) else "-",
             str(grand_amplicons),
             str(grand_genomes),
-            f"{grand_avg_amp_per_genome:.2f}" if isinstance(grand_avg_amp_per_genome, float) else "-",
+            (
+                f"{grand_avg_amp_per_genome:.2f}"
+                if isinstance(grand_avg_amp_per_genome, float)
+                else "-"
+            ),
             str(grand_genomes_with_hits),
-            f"{grand_frac_with_hits:.1f}%"
+            f"{grand_frac_with_hits:.1f}%",
         ]
         rows.append(total_row)
         return rows
@@ -413,7 +561,7 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
         "Genomes Tested",
         "Avg. Amp./Genome",
         "Genomes w/ Amp.",
-        "% Genomes w/ Amp."
+        "% Genomes w/ Amp.",
     ]
 
     for run_name, run_data in run_items:
@@ -428,7 +576,9 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
             if patterns and any(fnmatch.fnmatchcase(org_lc, pat) for pat in patterns):
                 target_set.add(org)
         target_organisms = sorted(target_set)
-        nontarget_organisms = sorted([org for org in all_organisms if org not in target_set])
+        nontarget_organisms = sorted(
+            [org for org in all_organisms if org not in target_set]
+        )
 
         # Panel 1: targets
         if target_organisms:
@@ -442,7 +592,7 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
                     writer.writerow([run_name, *row])
                 print(output.getvalue())
             elif output_format == "markdown":
-                print(f"#### TARGET ORGANISMS")
+                print("#### TARGET ORGANISMS")
                 md = "| " + " | ".join(headers) + " |\n"
                 md += "|---" * len(headers) + "|\n"
                 for row in target_rows:
@@ -450,7 +600,7 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
                 print(md)
             else:
                 print(format_table(headers=headers, rows=target_rows))
-        
+
         # Panel 2: nontargets
         if nontarget_organisms:
             print(f"\n=== Run: {run_name} {'(Non-targets)' if target else ''} ===")
@@ -463,7 +613,7 @@ def summarize_results(results_path: Path, output_format: str = "text", target: O
                     writer.writerow([run_name, *row])
                 print(output.getvalue())
             elif output_format == "markdown":
-                print(f"#### NON-TARGET ORGANISMS")
+                print("#### NON-TARGET ORGANISMS")
                 md = "| " + " | ".join(headers) + " |\n"
                 md += "|---" * len(headers) + "|\n"
                 for row in nontarget_rows:
@@ -478,11 +628,16 @@ def main():
 
     # Engine-aware dependency check (only relevant for `assay`)
     if args.command == "assay":
-        check_dependencies(engine=args.engine, ipcr_bin=args.ipcr_bin, ipcress_bin=args.ipcress_bin)
+        check_dependencies(
+            engine=args.engine, ipcr_bin=args.ipcr_bin, ipcress_bin=args.ipcress_bin
+        )
     else:
         check_dependencies()
 
-    setup_logging(args.outdir if hasattr(args, "outdir") else Path("."), verbose=getattr(args, 'verbose', False))
+    setup_logging(
+        args.outdir if hasattr(args, "outdir") else Path("."),
+        verbose=getattr(args, "verbose", False),
+    )
 
     # Dispatch to modular command functions
     if args.command == "list":

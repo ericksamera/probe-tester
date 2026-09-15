@@ -17,12 +17,16 @@ from modules.fasta_io import read_fasta, write_fasta
 
 logger = logging.getLogger(__name__)
 
+
 def chunked(iterable: List[str], n: int) -> Iterator[List[str]]:
     """Yield successive n-sized chunks from iterable."""
     for i in range(0, len(iterable), n):
-        yield iterable[i:i + n]
+        yield iterable[i : i + n]
 
-def validate_taxon(input_taxon: str, parent_mode: bool = False) -> Optional[tuple[str, int, str, dict]]:
+
+def validate_taxon(
+    input_taxon: str, parent_mode: bool = False
+) -> Optional[tuple[str, int, str, dict]]:
     """
     Validates a taxon name using NCBI datasets CLI.
     Returns tuple of (name, taxid, rank, taxonomy dict) for use in both parent/species mode.
@@ -32,7 +36,7 @@ def validate_taxon(input_taxon: str, parent_mode: bool = False) -> Optional[tupl
     try:
         result = io_tools.run_command(
             ["datasets", "summary", "taxonomy", "taxon", input_taxon],
-            capture_output=True
+            capture_output=True,
         )
     except Exception as e:
         logger.error("Error running datasets CLI: %s", e)
@@ -71,17 +75,20 @@ def validate_taxon(input_taxon: str, parent_mode: bool = False) -> Optional[tupl
                 break
         # fallback: just call it "parent" if not found
         parent_name = parent_name or f"taxid_{parent_taxid}"
-        logger.info("Parent mode: using parent %s (taxid: %s)", parent_name, parent_taxid)
+        logger.info(
+            "Parent mode: using parent %s (taxid: %s)", parent_name, parent_taxid
+        )
         return parent_name, parent_taxid, "parent", taxonomy
 
-    logger.info("Validated taxon: %s (taxid: %s, rank: %s)", current_name, current_taxid, rank)
+    logger.info(
+        "Validated taxon: %s (taxid: %s, rank: %s)", current_name, current_taxid, rank
+    )
     return current_name, current_taxid, rank, taxonomy
 
 
 def get_species_accessions_by_parent_taxid(
-        parent_taxid: int,
-        output_dir: Path = Path(".")
-    ) -> Optional[Dict[str, List[str]]]:
+    parent_taxid: int, output_dir: Path = Path(".")
+) -> Optional[Dict[str, List[str]]]:
     """
     Fetch and return mapping of all child species and their accessions under a parent taxon.
     Returns {species_name: [accession1, accession2, ...]}
@@ -89,10 +96,10 @@ def get_species_accessions_by_parent_taxid(
     logger.info("Fetching all child species for parent taxid: %d", parent_taxid)
     return get_genomes_mapping(parent_taxid, output_dir)
 
+
 def get_accessions_for_species(
-        species_taxid: int,
-        output_dir: Path = Path(".")
-    ) -> List[str]:
+    species_taxid: int, output_dir: Path = Path(".")
+) -> List[str]:
     """
     Fetch and return accessions for a specific species only.
     Returns [accession1, accession2, ...]
@@ -107,20 +114,27 @@ def get_accessions_for_species(
         return accessions
     return []
 
+
 def get_genomes_mapping(
-        taxid: int,
-        output_dir: Path = Path(".")
-    ) -> Optional[Dict[str, List[str]]]:
+    taxid: int, output_dir: Path = Path(".")
+) -> Optional[Dict[str, List[str]]]:
     """
     Returns a mapping from species to a list of current_accession IDs for available genomes.
     """
     try:
-        result = io_tools.run_command([
-                "datasets", "summary", "genome", "taxon", str(taxid),
-                "--assembly-source", "GenBank",
-                "--assembly-version", "latest",
+        result = io_tools.run_command(
+            [
+                "datasets",
+                "summary",
+                "genome",
+                "taxon",
+                str(taxid),
+                "--assembly-source",
+                "GenBank",
+                "--assembly-version",
+                "latest",
             ],
-            capture_output=True
+            capture_output=True,
         )
     except Exception as e:
         logger.error("Error running datasets CLI: %s", e)
@@ -132,16 +146,21 @@ def get_genomes_mapping(
 
     entries = json.loads(result.stdout.strip())
     sample_species_dict: Dict[str, List[str]] = {}
-    for entry in entries['reports']:
-        organism_name = "-".join(entry.get("organism", {}).get("organism_name", "").split()[:2])
+    for entry in entries["reports"]:
+        organism_name = "-".join(
+            entry.get("organism", {}).get("organism_name", "").split()[:2]
+        )
         assembly_name: str = entry.get("assembly_info", {}).get("assembly_name")
 
         if not assembly_name or not assembly_name.startswith("ASM"):
             continue
 
-        sample_species_dict.setdefault(organism_name, []).append(entry.get("current_accession"))
+        sample_species_dict.setdefault(organism_name, []).append(
+            entry.get("current_accession")
+        )
 
     return sample_species_dict
+
 
 def download_genomes(
     species: str,
@@ -165,7 +184,9 @@ def download_genomes(
     genomes_counter: int = 0
 
     accession_chunks: List[List[str]] = (
-        [accession_list] if total <= chunk_size else list(chunked(accession_list, chunk_size))
+        [accession_list]
+        if total <= chunk_size
+        else list(chunked(accession_list, chunk_size))
     )
 
     def _extract_accession(member_path_str: str) -> str:
@@ -179,7 +200,9 @@ def download_genomes(
     def _process_zip() -> None:
         nonlocal genomes_counter
         with zipfile.ZipFile(zip_path) as z:
-            fasta_names: List[str] = [name for name in z.namelist() if name.endswith(".fna")]
+            fasta_names: List[str] = [
+                name for name in z.namelist() if name.endswith(".fna")
+            ]
             for name in fasta_names:
                 with z.open(name) as handle, io.TextIOWrapper(handle) as fasta_text:
                     accession: str = _extract_accession(name)
@@ -222,7 +245,9 @@ def download_genomes(
     else:
         print(f"[INFO] Writing {species} FASTAs ({total} total):")
         for idx, acc_chunk in enumerate(accession_chunks, 1):
-            print(f"  Downloading chunk {idx}/{len(accession_chunks)} ({len(acc_chunk)} genomes)")
+            print(
+                f"  Downloading chunk {idx}/{len(accession_chunks)} ({len(acc_chunk)} genomes)"
+            )
             try:
                 io_tools.run_command(
                     ["datasets", "download", "genome", "accession", *acc_chunk],

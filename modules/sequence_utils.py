@@ -4,29 +4,65 @@ modules/sequence_utils.py
 Basic utilities for sequence analysis.
 """
 
+
 def reverse_complement(seq: str) -> str:
     """
     Return the reverse complement of a DNA sequence, handling ambiguous bases and case.
     """
     complement = {
-        'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C',
-        'R': 'Y', 'Y': 'R', 'S': 'S', 'W': 'W',
-        'K': 'M', 'M': 'K', 'B': 'V', 'D': 'H',
-        'H': 'D', 'V': 'B', 'N': 'N',
-        'a': 't', 't': 'a', 'c': 'g', 'g': 'c',
-        'r': 'y', 'y': 'r', 's': 's', 'w': 'w',
-        'k': 'm', 'm': 'k', 'b': 'v', 'd': 'h',
-        'h': 'd', 'v': 'b', 'n': 'n'
+        "A": "T",
+        "T": "A",
+        "C": "G",
+        "G": "C",
+        "R": "Y",
+        "Y": "R",
+        "S": "S",
+        "W": "W",
+        "K": "M",
+        "M": "K",
+        "B": "V",
+        "D": "H",
+        "H": "D",
+        "V": "B",
+        "N": "N",
+        "a": "t",
+        "t": "a",
+        "c": "g",
+        "g": "c",
+        "r": "y",
+        "y": "r",
+        "s": "s",
+        "w": "w",
+        "k": "m",
+        "m": "k",
+        "b": "v",
+        "d": "h",
+        "h": "d",
+        "v": "b",
+        "n": "n",
     }
-    return ''.join(complement.get(base, base) for base in reversed(seq))
+    return "".join(complement.get(base, base) for base in reversed(seq))
+
 
 # Bit masks: A=1, C=2, G=4, T=8
 _IUPAC = {
-    "A": 0b0001, "C": 0b0010, "G": 0b0100, "T": 0b1000,
-    "R": 0b0101, "Y": 0b1010, "S": 0b0110, "W": 0b1001,
-    "K": 0b1100, "M": 0b0011, "B": 0b1110, "D": 0b1101,
-    "H": 0b1011, "V": 0b0111, "N": 0b1111,
+    "A": 0b0001,
+    "C": 0b0010,
+    "G": 0b0100,
+    "T": 0b1000,
+    "R": 0b0101,
+    "Y": 0b1010,
+    "S": 0b0110,
+    "W": 0b1001,
+    "K": 0b1100,
+    "M": 0b0011,
+    "B": 0b1110,
+    "D": 0b1101,
+    "H": 0b1011,
+    "V": 0b0111,
+    "N": 0b1111,
 }
+
 
 def _base_match(genome_base: str, primer_base: str) -> bool:
     """
@@ -38,6 +74,7 @@ def _base_match(genome_base: str, primer_base: str) -> bool:
     if g not in "ACGT":
         return False
     return (_IUPAC.get(p, 0) & _IUPAC[g]) != 0
+
 
 def count_mismatches(primer: str, window: str) -> int:
     """
