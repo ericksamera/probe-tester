@@ -12,7 +12,7 @@ import logging
 import json
 from pathlib import Path
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from modules.formatting import format_table
 from modules.genome_manager import (
@@ -28,8 +28,8 @@ def check_dependencies(
     engine: Optional[str] = None,
     ipcr_bin: Optional[Path] = None,
     ipcress_bin: Optional[Path] = None,
-    required=["rich"],
-    required_cli=["datasets"],
+    required: Sequence[str] = (),
+    required_cli: Sequence[str] = (),
 ) -> None:
     """
     Verify Python and CLI dependencies. If `engine` is provided, also checks the chosen assay engine executable.
@@ -41,7 +41,6 @@ def check_dependencies(
         except ImportError:
             missing.append(mod)
 
-    # Always required for NCBI downloads (datasets)
     from shutil import which
 
     for cli in required_cli:
@@ -559,10 +558,15 @@ def summarize_results(
         "Probe MM",
         "Amplicons",
         "Genomes Tested",
-        "Avg. Amp./Genome",
+        "Avg. Amp./Positive Genome",
         "Genomes w/ Amp.",
         "% Genomes w/ Amp.",
     ]
+
+    csv_output = StringIO() if output_format == "csv" else None
+    csv_writer = csv.writer(csv_output) if csv_output is not None else None
+    if csv_writer is not None:
+        csv_writer.writerow(["Run", "Panel", *headers])
 
     for run_name, run_data in run_items:
         all_organisms = list(run_data.keys())
@@ -582,16 +586,12 @@ def summarize_results(
 
         # Panel 1: targets
         if target_organisms:
-            print(f"\n=== Run: {run_name} (Targets) ===")
             target_rows = build_rows_and_totals(run_data, target_organisms)
-            if output_format == "csv":
-                output = StringIO()
-                writer = csv.writer(output)
-                writer.writerow(["Run", *headers])
+            if csv_writer is not None:
                 for row in target_rows:
-                    writer.writerow([run_name, *row])
-                print(output.getvalue())
+                    csv_writer.writerow([run_name, "target", *row])
             elif output_format == "markdown":
+                print(f"\n=== Run: {run_name} (Targets) ===")
                 print("#### TARGET ORGANISMS")
                 md = "| " + " | ".join(headers) + " |\n"
                 md += "|---" * len(headers) + "|\n"
@@ -599,20 +599,18 @@ def summarize_results(
                     md += "| " + " | ".join(row) + " |\n"
                 print(md)
             else:
+                print(f"\n=== Run: {run_name} (Targets) ===")
                 print(format_table(headers=headers, rows=target_rows))
 
-        # Panel 2: nontargets
+        # Panel 2: nontargets (or all organisms when no target was supplied)
         if nontarget_organisms:
-            print(f"\n=== Run: {run_name} {'(Non-targets)' if target else ''} ===")
             nontarget_rows = build_rows_and_totals(run_data, nontarget_organisms)
-            if output_format == "csv":
-                output = StringIO()
-                writer = csv.writer(output)
-                writer.writerow(["Run", *headers])
+            if csv_writer is not None:
+                panel = "non-target" if target else "all"
                 for row in nontarget_rows:
-                    writer.writerow([run_name, *row])
-                print(output.getvalue())
+                    csv_writer.writerow([run_name, panel, *row])
             elif output_format == "markdown":
+                print(f"\n=== Run: {run_name} {'(Non-targets)' if target else ''} ===")
                 print("#### NON-TARGET ORGANISMS")
                 md = "| " + " | ".join(headers) + " |\n"
                 md += "|---" * len(headers) + "|\n"
@@ -620,18 +618,26 @@ def summarize_results(
                     md += "| " + " | ".join(row) + " |\n"
                 print(md)
             else:
+                print(f"\n=== Run: {run_name} {'(Non-targets)' if target else ''} ===")
                 print(format_table(headers=headers, rows=nontarget_rows))
+
+    if csv_output is not None:
+        print(csv_output.getvalue(), end="")
 
 
 def main():
     args = parse_args()
 
-    # Engine-aware dependency check (only relevant for `assay`)
+    # Check only the dependencies required by the selected command.
     if args.command == "assay":
         check_dependencies(
-            engine=args.engine, ipcr_bin=args.ipcr_bin, ipcress_bin=args.ipcress_bin
+            engine=args.engine,
+            ipcr_bin=args.ipcr_bin,
+            ipcress_bin=args.ipcress_bin,
         )
-    else:
+    elif args.command in {"list", "download"}:
+        check_dependencies(required_cli=("datasets",))
+    else:  # summarize
         check_dependencies()
 
     setup_logging(

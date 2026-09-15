@@ -66,11 +66,11 @@ def open_guess(
     is_read = "r" in mode
     is_text = "t" in mode
 
-    # stdio
+    # stdio: return the existing streams directly so callers do not create
+    # an extra TextIOWrapper whose lifetime can close stdin/stdout.
     if path in (None, "-", ""):
         if is_text:
-            buf = sys.stdin.buffer if is_read else sys.stdout.buffer
-            return io.TextIOWrapper(buf, encoding=encoding)
+            return sys.stdin if is_read else sys.stdout
         return sys.stdin.buffer if is_read else sys.stdout.buffer
 
     p = os.fspath(path)
@@ -101,8 +101,9 @@ def read_fasta(
         fh = cast(TextIO, path)
         _close = False
     else:
-        fh = open_guess(cast(PathLike, path), "rt")
-        _close = True
+        path_arg = cast(PathLike, path)
+        fh = cast(TextIO, open_guess(path_arg, "rt"))
+        _close = path_arg not in ("-", "")
 
     try:
         header: Optional[str] = None
@@ -140,17 +141,20 @@ def write_fasta(
     Write records to FASTA. Each record may be (id, seq) or (id, desc, seq).
     If 2-tuple, desc=id. If path is None or '-', writes to stdout.
     """
-    with open_guess(path, "wt") as out:
+    out = cast(TextIO, open_guess(path, "wt"))
+    should_close = path not in (None, "-", "")
+    try:
         for rec in records:
             if len(rec) == 2:  # type: ignore[truthy-bool]
                 rid, seq = rec  # type: ignore[misc]
-                desc = rid
+                desc = None
             else:
                 rid, desc, seq = rec  # type: ignore[misc]
-                if not desc:
-                    desc = rid
-            out.write(f">{desc}\n")
+            out.write(f">{_format_header(rid, desc)}\n")
             _write_wrapped(out, (seq or "").strip().upper(), width)
+    finally:
+        if should_close:
+            out.close()
 
 
 def write_record(
@@ -161,12 +165,22 @@ def write_record(
     width: int = 80,
 ) -> None:
     """Write a single FASTA record to an open text handle."""
-    d = desc or rid
-    handle.write(f">{d}\n")
+    handle.write(f">{_format_header(rid, desc)}\n")
     _write_wrapped(handle, (seq or "").strip().upper(), width)
 
 
 # ---------------------- internal helpers ----------------------
+
+
+def _format_header(rid: str, desc: Optional[str]) -> str:
+    """Build a FASTA header without discarding the record ID."""
+    rid = rid.strip()
+    d = (desc or "").strip()
+    if not d:
+        return rid
+    if d == rid or d.startswith(f"{rid} "):
+        return d
+    return f"{rid} {d}"
 
 
 def _split_header(header: str, *, keep_description: bool) -> Tuple[str, str]:
