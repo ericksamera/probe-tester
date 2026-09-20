@@ -14,7 +14,12 @@ from tempfile import NamedTemporaryFile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from modules import io_tools
-from modules.sequence_utils import reverse_complement, count_mismatches
+from modules.sequence_utils import (
+    reverse_complement,
+    count_mismatches,
+    _compile_primer,
+    _GENOME_MASKS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,23 +82,53 @@ def _parse_fasta_from_text(
 
 
 def match_probe(probe: str, sequence: str) -> Tuple[int, int]:
-    """
-    Find the best match (minimum mismatches) for a probe in a target sequence.
-    Returns (min_mismatches, best_position). If no window returned, (-1,-1).
+    """Find the leftmost minimum-mismatch probe window using current IUPAC rules.
+
+    For compatibility, retain (-1, -1) when there is no window, and
+    (len(probe), -1) when every window mismatches at every position.
     """
     if not probe or not sequence or len(sequence) < len(probe):
         return -1, -1
-    min_mismatches = len(probe)
-    best_pos = -1
-    for i in range(len(sequence) - len(probe) + 1):
-        window = sequence[i : i + len(probe)]
-        mismatches = count_mismatches(probe, window)
-        if mismatches < min_mismatches:
-            min_mismatches = mismatches
-            best_pos = i
-            if min_mismatches == 0:
+
+    # Unicode uppercasing can change lengths. Keep the original windowing
+    # behavior for non-ASCII input instead of silently changing its result.
+    if not probe.isascii() or not sequence.isascii():
+        best, best_pos = len(probe), -1
+        for i in range(len(sequence) - len(probe) + 1):
+            mismatches = count_mismatches(probe, sequence[i : i + len(probe)])
+            if mismatches < best:
+                best, best_pos = mismatches, i
+                if best == 0:
+                    break
+        return best, best_pos
+
+    probe = probe.upper()
+    sequence = sequence.upper()
+    probe_len = len(probe)
+    probe_masks, unambiguous = _compile_primer(probe)
+
+    # Literal matching is correct only for an A/C/G/T-only query. A literal
+    # N in the genome must never be accepted as a probe match.
+    if unambiguous:
+        pos = sequence.find(probe)
+        if pos >= 0:
+            return 0, pos
+
+    genome_masks = tuple(_GENOME_MASKS.get(base, 0) for base in sequence)
+    best, best_pos = probe_len, -1
+    for i in range(len(sequence) - probe_len + 1):
+        mismatches = 0
+        for p_mask, g_mask in zip(probe_masks, genome_masks[i : i + probe_len]):
+            if not (p_mask & g_mask):
+                mismatches += 1
+                # Ties cannot replace an earlier best position.
+                if mismatches >= best:
+                    break
+        if mismatches < best:
+            best, best_pos = mismatches, i
+            if best == 0:
                 break
-    return min_mismatches, best_pos
+    return best, best_pos
 
 
 # ----------------------------- IPCRESS runner -----------------------------
@@ -172,9 +207,7 @@ def _parse_ipcr_jsonl_records(text: str) -> List[Dict[str, Any]]:
                 f"ipcr JSONL line {line_number} is not valid JSON: {exc}"
             ) from exc
         if not isinstance(payload, dict):
-            raise ValueError(
-                f"ipcr JSONL line {line_number} is not a product object"
-            )
+            raise ValueError(f"ipcr JSONL line {line_number} is not a product object")
 
         required = {"sequence_id", "start", "end", "length", "type", "seq"}
         missing = required - set(payload)
@@ -419,11 +452,6 @@ def normalize_ipcr_products(
                 f"forward={f_mismatches}, reverse={r_mismatches}"
             )
 
-        if probe:
-            probe_mismatches, probe_pos = match_probe(probe, product)
-        else:
-            probe_mismatches, probe_pos = None, None
-
         sequence_id = str(record.get("sequence_id", ""))
         source_file = str(record.get("source_file", ""))
         experiment_id = str(record.get("experiment_id", ""))
@@ -474,6 +502,23 @@ def normalize_ipcr_products(
                     len(product),
                 )
 
+        if locus_key is not None and locus_key in locus_to_index:
+            existing = normalized[locus_to_index[locus_key]]
+            if existing["product"] != product:
+                raise RuntimeError(
+                    "ipcr returned conflicting normalized sequences for one locus: "
+                    f"{locus_key}"
+                )
+            existing["duplicate_record_count"] = (
+                int(existing["duplicate_record_count"]) + 1
+            )
+            continue
+
+        if probe:
+            probe_mismatches, probe_pos = match_probe(probe, product)
+        else:
+            probe_mismatches, probe_pos = None, None
+
         item: Dict[str, Any] = {
             "product": product,
             "product_id": product_id,
@@ -489,18 +534,6 @@ def normalize_ipcr_products(
             "probe_mismatches": probe_mismatches,
             "probe_position": probe_pos,
         }
-
-        if locus_key is not None and locus_key in locus_to_index:
-            existing = normalized[locus_to_index[locus_key]]
-            if existing["product"] != product:
-                raise RuntimeError(
-                    "ipcr returned conflicting normalized sequences for one locus: "
-                    f"{locus_key}"
-                )
-            existing["duplicate_record_count"] = (
-                int(existing["duplicate_record_count"]) + 1
-            )
-            continue
 
         if locus_key is not None:
             locus_to_index[locus_key] = len(normalized)

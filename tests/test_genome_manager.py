@@ -36,7 +36,9 @@ class GenomeManagerTests(unittest.TestCase):
         }
         completed = SimpleNamespace(stdout=json.dumps(payload).encode())
 
-        with patch("modules.genome_manager.io_tools.run_command", return_value=completed) as run:
+        with patch(
+            "modules.genome_manager.io_tools.run_command", return_value=completed
+        ) as run:
             mapping = get_genomes_mapping(2110)
 
         run.assert_called_once_with(

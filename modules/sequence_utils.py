@@ -4,44 +4,18 @@ modules/sequence_utils.py
 Basic utilities for sequence analysis.
 """
 
+from functools import lru_cache
+from typing import Tuple
+
+_COMPLEMENT_TABLE = str.maketrans(
+    "ACGTRYSWKMBDHVNacgtryswkmbdhvn",
+    "TGCAYRSWMKVHDBNtgcayrswmkvhdbn",
+)
+
 
 def reverse_complement(seq: str) -> str:
-    """
-    Return the reverse complement of a DNA sequence, handling ambiguous bases and case.
-    """
-    complement = {
-        "A": "T",
-        "T": "A",
-        "C": "G",
-        "G": "C",
-        "R": "Y",
-        "Y": "R",
-        "S": "S",
-        "W": "W",
-        "K": "M",
-        "M": "K",
-        "B": "V",
-        "D": "H",
-        "H": "D",
-        "V": "B",
-        "N": "N",
-        "a": "t",
-        "t": "a",
-        "c": "g",
-        "g": "c",
-        "r": "y",
-        "y": "r",
-        "s": "s",
-        "w": "w",
-        "k": "m",
-        "m": "k",
-        "b": "v",
-        "d": "h",
-        "h": "d",
-        "v": "b",
-        "n": "n",
-    }
-    return "".join(complement.get(base, base) for base in reversed(seq))
+    """Reverse-complement DNA, retaining case and passing unknown symbols through."""
+    return seq.translate(_COMPLEMENT_TABLE)[::-1]
 
 
 # Bit masks: A=1, C=2, G=4, T=8
@@ -76,19 +50,24 @@ def _base_match(genome_base: str, primer_base: str) -> bool:
     return (_IUPAC.get(p, 0) & _IUPAC[g]) != 0
 
 
+# Only unambiguous genomic bases can match. In particular, genome N is
+# still a mismatch even when the primer/probe contains N.
+_GENOME_MASKS = {"A": 0b0001, "C": 0b0010, "G": 0b0100, "T": 0b1000}
+
+
+@lru_cache(maxsize=128)
+def _compile_primer(primer_upper: str) -> Tuple[Tuple[int, ...], bool]:
+    """Cache query encodings in a bounded cache, never target sequences."""
+    masks = tuple(_IUPAC.get(base, 0) for base in primer_upper)
+    unambiguous = all(mask in (1, 2, 4, 8) for mask in masks)
+    return masks, unambiguous
+
+
 def count_mismatches(primer: str, window: str) -> int:
-    """
-    Count mismatches between primer (may contain IUPAC codes) and a genome window.
-    Args:
-      primer: primer/probe sequence (IUPAC allowed)
-      window: genome subsequence (expected A/C/G/T/N)
-    """
-    mm = 0
-    for p, g in zip(primer.upper(), window.upper()):
-        if not _base_match(g, p):  # NOTE: genome first, primer second (fixed)
-            mm += 1
-    mm += abs(len(primer) - len(window))
-    return mm
-
-
-# ---
+    """Count IUPAC-aware mismatches, preserving unequal-length behavior."""
+    masks, _ = _compile_primer(primer.upper())
+    genome_mask = _GENOME_MASKS.get
+    return sum(
+        not (primer_mask & genome_mask(base, 0))
+        for primer_mask, base in zip(masks, window.upper())
+    ) + abs(len(primer) - len(window))
