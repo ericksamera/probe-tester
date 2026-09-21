@@ -76,6 +76,34 @@ Add `--dry-run` to preview downloads, or `--force` to skip confirmation for larg
 
 ---
 
+### **Marker Reference Panels (BOLD)**
+
+Download public marker sequences for all identified species within a taxonomic query.
+`COI` and `CO1` are normalized to BOLD's `COI-5P` marker code.
+
+```sh
+python main.py download-marker \
+  --taxon "Ixodidae" \
+  --marker COI \
+  --min-length 500
+```
+
+This writes one multi-record FASTA per species below `markers/COI-5P/`. Test the
+panel with the normal assay command by selecting `--markers-dir`:
+
+```sh
+python main.py assay \
+  --markers-dir markers/COI-5P \
+  --forward ... \
+  --reverse ... \
+  --probe ... \
+  --threads 8
+```
+
+Marker mode currently requires the `ipcr` engine because its JSONL output
+preserves FASTA record IDs. Each barcode record is counted independently in
+the summary, including records with no amplification.
+
 ### **2. Run the Assay**
 
 Test your primers and probe against all genomes:

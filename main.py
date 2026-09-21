@@ -21,8 +21,9 @@ from modules.genome_manager import (
     get_accessions_for_species,
     download_genomes,
 )
-from modules.probe_analysis import analyze_genome_products
+from modules.probe_analysis import analyze_genome_products, analyze_marker_products
 from modules.ipcr_backend import IPCRBackendError, resolve_ipcr_binary
+from modules.marker_manager import download_bold_marker
 
 
 def check_dependencies(
@@ -235,6 +236,26 @@ def download_command(args):
         )
 
 
+def download_marker_command(args):
+    if args.source != "bold":
+        raise ValueError(f"unsupported marker source: {args.source}")
+    manifest = download_bold_marker(
+        args.taxon,
+        marker=args.marker,
+        outdir=args.outdir,
+        min_length=args.min_length,
+        max_records=args.max_records,
+    )
+    marker_dir = args.outdir / "markers" / manifest["marker"]
+    print(
+        f"\n[SUCCESS] Downloaded {manifest['kept_records']} {manifest['marker']} "
+        f"records across {manifest['species_count']} species.\n"
+        f"References written to {marker_dir}\n"
+        "Next: python main.py assay --markers-dir "
+        f"{marker_dir} --forward <FWD> --reverse <REV> --probe <PROBE>"
+    )
+
+
 def assay_command(args):
     import datetime
     import re
@@ -252,19 +273,38 @@ def assay_command(args):
         output_path = args.output
 
     threads = getattr(args, "threads", 1)
-    results = analyze_genome_products(
-        forward_primer=args.forward,
-        reverse_primer=args.reverse,
-        probe=args.probe,  # Optional
-        genomes_dir=args.genomes_dir,
-        primer_min=args.primer_min,
-        primer_max=args.primer_max,
-        mismatch=args.mismatch,
-        threads=threads,
-        engine=args.engine,
-        ipcr_bin=args.ipcr_bin,
-        ipcress_bin=args.ipcress_bin,
-    )
+    if args.markers_dir is not None:
+        if args.engine != "ipcr":
+            raise ValueError("--markers-dir currently requires --engine ipcr")
+        results = analyze_marker_products(
+            forward_primer=args.forward,
+            reverse_primer=args.reverse,
+            probe=args.probe,
+            markers_dir=args.markers_dir,
+            primer_min=args.primer_min,
+            primer_max=args.primer_max,
+            mismatch=args.mismatch,
+            threads=threads,
+            ipcr_bin=args.ipcr_bin,
+        )
+        reference_type = "marker"
+        reference_dir = args.markers_dir
+    else:
+        results = analyze_genome_products(
+            forward_primer=args.forward,
+            reverse_primer=args.reverse,
+            probe=args.probe,  # Optional
+            genomes_dir=args.genomes_dir,
+            primer_min=args.primer_min,
+            primer_max=args.primer_max,
+            mismatch=args.mismatch,
+            threads=threads,
+            engine=args.engine,
+            ipcr_bin=args.ipcr_bin,
+            ipcress_bin=args.ipcress_bin,
+        )
+        reference_type = "genome"
+        reference_dir = args.genomes_dir
 
     metadata = {
         "run_name": run_name,
@@ -276,7 +316,10 @@ def assay_command(args):
         "primer_min": args.primer_min,
         "primer_max": args.primer_max,
         "mismatch": args.mismatch,
-        "genomes_dir": str(args.genomes_dir),
+        "genomes_dir": str(args.genomes_dir) if reference_type == "genome" else None,
+        "markers_dir": str(args.markers_dir) if reference_type == "marker" else None,
+        "reference_type": reference_type,
+        "reference_dir": str(reference_dir),
         "probe_tester_version": __VERSION__,
         "python": platform.python_version(),
         "platform": platform.platform(),
@@ -372,8 +415,41 @@ def parse_args() -> argparse.Namespace:
         help="Preview what would be downloaded, but do not download",
     )
 
+    # --- MARKER DOWNLOAD SUBCOMMAND ---
+    marker_dl = subparsers.add_parser(
+        "download-marker", help="Download taxonomically scoped marker references"
+    )
+    marker_dl.add_argument("--taxon", required=True, help="Taxon name to query in BOLD")
+    marker_dl.add_argument(
+        "--marker",
+        default="COI-5P",
+        help="BOLD marker code (COI/CO1 aliases normalize to COI-5P)",
+    )
+    marker_dl.add_argument(
+        "--source",
+        choices=["bold"],
+        default="bold",
+        help="Reference source (currently BOLD)",
+    )
+    marker_dl.add_argument(
+        "--outdir", type=Path, default=Path("."), help="Output directory"
+    )
+    marker_dl.add_argument(
+        "--min-length",
+        type=int,
+        default=0,
+        help="Discard marker records shorter than this many bases",
+    )
+    marker_dl.add_argument(
+        "--max-records",
+        type=int,
+        default=None,
+        help="Stop after this many retained records (useful for testing)",
+    )
+    marker_dl.add_argument("--verbose", action="store_true")
+
     # --- TEST SUBCOMMAND ---
-    test = subparsers.add_parser("assay", help="Test probes on downloaded genomes")
+    test = subparsers.add_parser("assay", help="Test probes on downloaded references")
     test.add_argument("--forward", required=True, help="Forward primer sequence")
     test.add_argument("--reverse", required=True, help="Reverse primer sequence")
     test.add_argument("--probe", required=False, help="Probe sequence (optional)")
@@ -382,6 +458,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("./genomes"),
         help="Genomes directory (output of download)",
+    )
+    test.add_argument(
+        "--markers-dir",
+        type=Path,
+        default=None,
+        help="Marker reference directory (output of download-marker); uses ipcr only",
     )
     test.add_argument("--primer-min", type=int, default=60, help="Min product length")
     test.add_argument("--primer-max", type=int, default=200, help="Max product length")
@@ -557,16 +639,19 @@ def summarize_results(
         rows.append(total_row)
         return rows
 
+    marker_mode = data.get("_metadata", {}).get("reference_type") == "marker"
+    unit = "Sequences" if marker_mode else "Genomes"
+    positive_unit = "Positive Sequence" if marker_mode else "Positive Genome"
     headers = [
         "Organism",
         "Fwd MM",
         "Rev MM",
         "Probe MM",
         "Amplicons",
-        "Genomes Tested",
-        "Avg. Amp./Positive Genome",
-        "Genomes w/ Amp.",
-        "% Genomes w/ Amp.",
+        f"{unit} Tested",
+        f"Avg. Amp./{positive_unit}",
+        f"{unit} w/ Amp.",
+        f"% {unit} w/ Amp.",
     ]
 
     csv_output = StringIO() if output_format == "csv" else None
@@ -639,7 +724,7 @@ def main():
         prepare_assay_engine(args)
     elif args.command in {"list", "download"}:
         check_dependencies(required_cli=("datasets",))
-    else:  # summarize
+    else:  # download-marker and summarize use only the standard library
         check_dependencies()
 
     setup_logging(
@@ -652,6 +737,8 @@ def main():
         list_command(args)
     elif args.command == "download":
         download_command(args)
+    elif args.command == "download-marker":
+        download_marker_command(args)
     elif args.command == "assay":
         assay_command(args)
     elif args.command == "summarize":

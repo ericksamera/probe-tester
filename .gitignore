@@ -207,6 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 genomes/
+markers/
 *.csv
 *.zip
 *.txt

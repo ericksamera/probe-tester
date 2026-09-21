@@ -14,6 +14,7 @@ from tempfile import NamedTemporaryFile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from modules import io_tools
+from modules.fasta_io import read_fasta
 from modules.sequence_utils import (
     reverse_complement,
     count_mismatches,
@@ -622,6 +623,119 @@ def process_genome_job(args: tuple) -> tuple[str, str, list]:
         )
 
     return (species_name, genome_id, product_results)
+
+
+def process_marker_job(args: tuple) -> tuple[str, dict[str, list]]:
+    """Run ipcr once against a multi-record marker FASTA and restore per-record results."""
+    (
+        forward_primer,
+        reverse_primer,
+        probe,
+        species_name,
+        fasta_path,
+        mismatch,
+        primer_min,
+        primer_max,
+        dry_run,
+        ipcr_bin,
+    ) = args
+
+    record_ids = [rid for rid, _desc, _seq in read_fasta(fasta_path)]
+    per_record: dict[str, list] = {rid: [] for rid in record_ids}
+
+    records = (
+        _run_ipcr_records(
+            forward_primer,
+            reverse_primer,
+            fasta_path,
+            min_len=primer_min,
+            max_len=primer_max,
+            mismatches=mismatch,
+            threads=1,
+            dry_run=dry_run,
+            ipcr_exe=ipcr_bin,
+        )
+        or []
+    )
+    products = normalize_ipcr_products(
+        records,
+        forward_primer,
+        reverse_primer,
+        probe,
+        mismatch,
+    )
+    for product in products:
+        source_id = str(product.get("product_source_id", ""))
+        if source_id not in per_record:
+            raise RuntimeError(
+                f"ipcr returned sequence_id {source_id!r} not present in {fasta_path}"
+            )
+        per_record[source_id].append(product)
+    return species_name, per_record
+
+
+def analyze_marker_products(
+    *,
+    forward_primer: str,
+    reverse_primer: str,
+    probe: Optional[str],
+    markers_dir: Path,
+    primer_min: int = 60,
+    primer_max: int = 200,
+    mismatch: int = 3,
+    dry_run: bool = False,
+    threads: int = 1,
+    ipcr_bin: Optional[Path] = None,
+) -> Dict[str, Dict[str, list]]:
+    """Analyze species-level multi-record marker FASTAs with one ipcr call per FASTA.
+
+    Unlike genome mode, the returned inner mapping is keyed by FASTA record ID,
+    so sequences with no amplicon are retained as empty result lists.
+    """
+    markers_dir = Path(markers_dir)
+    species_dirs = sorted(d for d in markers_dir.iterdir() if d.is_dir())
+    results: Dict[str, Dict[str, list]] = {d.name: {} for d in species_dirs}
+    jobs = []
+
+    for species_dir in species_dirs:
+        fasta_paths: List[Path] = []
+        for pat in _FASTA_GLOBS:
+            fasta_paths.extend(species_dir.glob(pat))
+        for fasta_path in sorted(set(fasta_paths)):
+            jobs.append(
+                (
+                    forward_primer,
+                    reverse_primer,
+                    probe,
+                    species_dir.name,
+                    fasta_path,
+                    mismatch,
+                    primer_min,
+                    primer_max,
+                    dry_run,
+                    ipcr_bin,
+                )
+            )
+
+    def merge(species_name: str, per_record: dict[str, list]) -> None:
+        overlap = set(results[species_name]).intersection(per_record)
+        if overlap:
+            duplicate = sorted(overlap)[0]
+            raise RuntimeError(
+                f"duplicate marker record ID {duplicate!r} within species {species_name}"
+            )
+        results[species_name].update(per_record)
+
+    if threads and threads > 1:
+        with ProcessPoolExecutor(max_workers=threads) as ex:
+            futures = [ex.submit(process_marker_job, job) for job in jobs]
+            for fut in as_completed(futures):
+                merge(*fut.result())
+    else:
+        for job in jobs:
+            merge(*process_marker_job(job))
+
+    return results
 
 
 # --------------------------- Public entry point ---------------------------

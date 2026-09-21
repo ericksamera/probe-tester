@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from modules.probe_analysis import (
     _parse_fasta_records_from_text,
     _parse_ipcr_jsonl_records,
     normalize_ipcr_products,
+    analyze_marker_products,
 )
 from modules.sequence_utils import reverse_complement
 
@@ -129,6 +133,48 @@ class ProbeAnalysisTests(unittest.TestCase):
                 probe=None,
                 max_mismatches=2,
             )
+
+
+class MarkerAnalysisTests(unittest.TestCase):
+    def test_marker_analysis_retains_no_hit_records(self) -> None:
+        forward = "AACCGG"
+        reverse = "GGTACC"
+        product = forward + "TTTTTTTT" + reverse_complement(reverse)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            species_dir = Path(tmp) / "Ixodes-scapularis"
+            species_dir.mkdir()
+            (species_dir / "sequences.fasta").write_text(
+                ">P1\n" + product + "\n>P2\n" + ("A" * 30) + "\n"
+            )
+            ipcr_record = {
+                "experiment_id": "manual",
+                "sequence_id": "P1",
+                "source_file": str(species_dir / "sequences.fasta"),
+                "start": 0,
+                "end": len(product),
+                "length": len(product),
+                "type": "forward",
+                "sequence": product,
+            }
+            with patch(
+                "modules.probe_analysis._run_ipcr_records",
+                return_value=[ipcr_record],
+            ) as run:
+                results = analyze_marker_products(
+                    forward_primer=forward,
+                    reverse_primer=reverse,
+                    probe="TTTT",
+                    markers_dir=Path(tmp),
+                    primer_min=10,
+                    primer_max=100,
+                    mismatch=2,
+                )
+
+        self.assertEqual(set(results["Ixodes-scapularis"]), {"P1", "P2"})
+        self.assertEqual(len(results["Ixodes-scapularis"]["P1"]), 1)
+        self.assertEqual(results["Ixodes-scapularis"]["P2"], [])
+        run.assert_called_once()
 
 
 if __name__ == "__main__":
