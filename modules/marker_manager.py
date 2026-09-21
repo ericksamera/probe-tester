@@ -10,6 +10,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -47,8 +48,18 @@ def _get_text(url: str, *, timeout: int = 120) -> str:
             "User-Agent": "probe-tester/marker-downloader",
         },
     )
-    with urlopen(request, timeout=timeout) as response:
-        return response.read().decode("utf-8-sig")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return response.read().decode("utf-8-sig")
+    except HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8-sig", errors="replace").strip()
+        except Exception:
+            detail = ""
+        message = f"BOLD API request failed with HTTP {exc.code}: {exc.reason}"
+        if detail:
+            message += f"; response: {detail[:1000]}"
+        raise RuntimeError(message) from exc
 
 
 def _get_json(url: str, *, timeout: int = 120) -> dict:
@@ -58,8 +69,39 @@ def _get_json(url: str, *, timeout: int = 120) -> dict:
     return payload
 
 
+def _resolved_tax_query(taxon: str, *, api_base: str = BOLD_API_BASE) -> str:
+    """Resolve a taxon name to BOLD's rank-qualified query triplet."""
+    params = urlencode({"query": f"tax:{taxon}"})
+    payload = _get_json(f"{api_base.rstrip('/')}/query/preprocessor?{params}")
+    successful = payload.get("successful_terms", [])
+    if isinstance(successful, dict):
+        successful = [successful]
+    if not isinstance(successful, list):
+        successful = []
+
+    matched_terms: List[str] = []
+    for term in successful:
+        if not isinstance(term, dict):
+            continue
+        matched = term.get("matched")
+        candidates = matched if isinstance(matched, list) else [matched]
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            # BOLDconnectR likewise removes comma-suffixed annotations from
+            # preprocessor matches before passing them to /api/query.
+            candidate = candidate.split(",", 1)[0].strip()
+            if candidate.startswith("tax:") and candidate not in matched_terms:
+                matched_terms.append(candidate)
+
+    if not matched_terms:
+        raise ValueError(f"BOLD API could not resolve taxon {taxon!r}")
+    return ";".join(matched_terms)
+
+
 def _bold_query_id(taxon: str, *, api_base: str = BOLD_API_BASE) -> str:
-    params = urlencode({"query": f"tax:{taxon}", "extent": "full"})
+    resolved_query = _resolved_tax_query(taxon, api_base=api_base)
+    params = urlencode({"query": resolved_query, "extent": "full"})
     payload = _get_json(f"{api_base.rstrip('/')}/query?{params}")
     query_id = payload.get("query_id")
     if not isinstance(query_id, str) or not query_id:
