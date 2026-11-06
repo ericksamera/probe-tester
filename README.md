@@ -118,6 +118,21 @@ Export to CSV/markdown for figures or publication:
 python main.py summarize --input results.json --format csv --target "Mycoplasmopsis-bovis"
 ```
 
+To count only amplicons with zero probe mismatches:
+
+```sh
+python main.py summarize --input results.json \
+  --target "Mycoplasmopsis-bovis" \
+  --exclude-probe-mismatches
+```
+
+This optional filter works with text, CSV, and Markdown output. It excludes
+amplicons with a probe mismatch or without an available probe match (including
+results generated without a probe). Counts and mismatch averages use only the
+retained amplicons. A genome is positive only if at least one amplicon remains;
+all tested genomes still contribute to `Genomes Tested` and the percentage
+denominator. Without this flag, summaries behave as before.
+
 ---
 
 ## **Advanced Usage**

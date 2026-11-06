@@ -295,7 +295,12 @@ def assay_command(args):
 
 
 def summarize_command(args):
-    summarize_results(args.input, getattr(args, "format", "text"), args.target)
+    summarize_results(
+        args.input,
+        getattr(args, "format", "text"),
+        args.target,
+        exclude_probe_mismatches=getattr(args, "exclude_probe_mismatches", False),
+    )
 
 
 def setup_logging(outdir: Path, verbose: bool = False) -> None:
@@ -451,14 +456,29 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         help="Organism(s) to treat as targets (exact or glob match, e.g. 'Mycoplasmopsis-bovis' or 'Mycoplasmopsis-*')",
     )
+    summ.add_argument(
+        "--exclude-probe-mismatches",
+        action="store_true",
+        help=(
+            "Count only amplicons with zero probe mismatches; excludes missing or "
+            "unavailable probe matches. All tested genomes remain in the denominator."
+        ),
+    )
 
     return parser.parse_args()
 
 
 def summarize_results(
-    results_path: Path, output_format: str = "text", target: Optional[list] = None
+    results_path: Path,
+    output_format: str = "text",
+    target: Optional[list] = None,
+    exclude_probe_mismatches: bool = False,
 ) -> None:
-    """Print detailed summary per organism from a results JSON, in text/csv/markdown, with totals and proper case-insensitive panel separation."""
+    """Summarize results with totals and case-insensitive target panels.
+
+    When exclude_probe_mismatches is enabled, count only amplicons whose
+    probe_mismatches is zero, retaining all tested genomes in the denominator.
+    """
     import csv
     from io import StringIO
     import fnmatch
@@ -481,6 +501,12 @@ def summarize_results(
             n_genomes = n_genomes_with_hits = 0
             for genome_results in genomes.values():
                 n_genomes += 1
+                if exclude_probe_mismatches:
+                    genome_results = [
+                        entry
+                        for entry in genome_results
+                        if entry.get("probe_mismatches") == 0
+                    ]
                 if genome_results:
                     n_genomes_with_hits += 1
                     total_amplicons += len(genome_results)
